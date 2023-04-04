@@ -123,16 +123,16 @@ async function getAssignments(course_id) {
         if (data_length > 0) {
             
             // console.log(data);
-            data.forEach((e) => {
+            data.forEach((a) => {
                 
                  let assignment = {
-                    'id': e.id,
+                    'id': a.id,
                     'course_id': course_id,
-                    'name': e.name,
-                    'use_rubric_for_grading': e.use_rubric_for_grading,
-                    'points_possible': e.points_possible,
-                    'rubric': e.rubric,
-                    'due_at': e.due_at 
+                    'name': a.name,
+                    'use_rubric_for_grading': a.use_rubric_for_grading,
+                    'points_possible': a.points_possible,
+                    'rubric': a.rubric,
+                    'due_at': a.due_at 
                 }
                 
                 if (assignment.use_rubric_for_grading) {
@@ -173,16 +173,29 @@ function getAssignmentById(assignments, assign_id) {
 
 const getRubrics = (assignment) => {
     let rubrics = []
-    assignment.rubric.forEach((r) => {
-        // console.log(`rubric: ${JSON.stringify(r)}`)
-        // console.log(`ALT code: ${r.description}\nALT Desc: ${r.long_description}`)
-        let rubric = {
-            id: r.id,
-            alt_code: r.description,
-            alt_text: r.long_description,
-        }
-        rubrics.push(rubric)
-    })
+
+    try {
+        assignment.rubric.forEach((r) => {
+            // console.log(`rubric: ${JSON.stringify(r)}`)
+            // console.log(`ALT code: ${r.description}\nALT Desc: ${r.long_description}`)
+            let rubric = {
+                id: r.id,
+                alt_code: r.description,
+                alt_text: r.long_description,
+            }
+            rubrics.push(rubric)
+        })
+    } catch(e) {
+        console.log('No rubrics found. Error:',e)
+    }
+
+    // adds entered score
+    let entered_score = {
+        id: 'entered_score',
+        alt_code: 'Canvas Assignment Point Total',
+        alt_text: 'Sum of points or rubric scores on assignment'
+    }
+    rubrics.push(entered_score)
     return(rubrics)
 }
 
@@ -317,6 +330,19 @@ function getScoresFromSubmissionsByRubricId(submissions, rubric_id) {
                         }
                     }
                 })
+            }
+            if (rubric_id == 'entered_score') { // adds entered score
+                score = {
+                    'course_id': s.course_id,
+                    'canvas_id': s.canvas_id,
+                    'synergy_id': s.synergy_id,
+                    'assign_id': s.assign_id,
+                    'rubric_id' : rubric_id,
+                    'score': s.entered_score,
+                    'excused': s.excused,
+                    'late' : s.late,
+                    'grading_per': s.grading_per,
+                }
             }
         } catch (e) {
             console.log(`Error on score extract ${e}`)
