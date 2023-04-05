@@ -135,7 +135,7 @@ async function getAssignments(course_id) {
                     'due_at': a.due_at 
                 }
                 
-                if (assignment.use_rubric_for_grading) {
+                if (assignment.use_rubric_for_grading | assignment.points_possible > 0) {
                     assignments.push(assignment)
                 } else {
                     console.log(`Skipping ${assignment.name} because it does not use a rubric.`)
