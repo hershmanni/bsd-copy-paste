@@ -173,7 +173,6 @@ function getAssignmentById(assignments, assign_id) {
 
 const getRubrics = (assignment) => {
     let rubrics = []
-
     try {
         assignment.rubric.forEach((r) => {
             // console.log(`rubric: ${JSON.stringify(r)}`)

@@ -99,7 +99,7 @@ function getScoresFromSubmissionsByRubricId(submissions, rubric_id) {
                     }
                 })
             }
-            
+
             if (rubric_id == 'entered_score') { // adds entered score
                 score = {
                     'course_id': s.course_id,
@@ -110,6 +110,7 @@ function getScoresFromSubmissionsByRubricId(submissions, rubric_id) {
                     'score': s.entered_score,
                     'excused': s.excused,
                     'late' : s.late,
+                    'missing': s.missing,
                     'grading_per': s.grading_per,
                 }
             }
