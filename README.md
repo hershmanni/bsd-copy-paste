@@ -11,6 +11,7 @@ Once Canvas data is fetched it is updated and sent to service_worker (background
 2. Testing app in real gradebook environments
 
 # Changelog
+v1.102 adds raw-score paste functionality.
 
 v1.101 provides link to Options from bottom of popup
 

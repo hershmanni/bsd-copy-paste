@@ -58,6 +58,13 @@ const getRubrics = (assignment) => {
         }
         rubrics.push(rubric)
     })
+    // adds entered score
+    let entered_score = {
+        id: 'entered_score',
+        alt_code: 'Canvas Assignment Point Total',
+        alt_text: 'Sum of points or rubric scores on assignment'
+    }
+    rubrics.push(entered_score)
     return(rubrics)
 }
 
@@ -97,6 +104,20 @@ function getScoresFromSubmissionsByRubricId(submissions, rubric_id) {
                         }
                     }
                 })
+            }
+            if (rubric_id == 'entered_score') { // adds entered score
+                score = {
+                    'course_id': s.course_id,
+                    'canvas_id': s.canvas_id,
+                    'synergy_id': s.synergy_id,
+                    'assign_id': s.assign_id,
+                    'rubric_id' : rubric_id,
+                    'score': s.entered_score,
+                    'excused': s.excused,
+                    'late' : s.late,
+                    'missing': s.missing,
+                    'grading_per': s.grading_per,
+                }
             }
         } catch (e) {
             console.log(`Error on score extract ${e}`)

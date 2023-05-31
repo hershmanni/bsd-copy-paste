@@ -141,7 +141,7 @@ async function getAssignments(course_id) {
                 }
                 
                 // only include assignments that have defined rubrics.
-                if (assignment.use_rubric_for_grading | assignment.rubric != undefined) {
+                if (assignment.use_rubric_for_grading | assignment.rubric != undefined | assignment.points_possible > 0) {
                     assignments.push(assignment)
                 } else {
                     console.log(`Skipping ${assignment.name} because it does not use a rubric.`)
@@ -183,16 +183,27 @@ function getAssignmentById(assignments, assign_id) {
 
 const getRubrics = (assignment) => {
     let rubrics = []
-    assignment.rubric.forEach((r) => {
-        // console.log(`rubric: ${JSON.stringify(r)}`)
-        // console.log(`ALT code: ${r.description}\nALT Desc: ${r.long_description}`)
-        let rubric = {
-            id: r.id,
-            alt_code: r.description,
-            alt_text: r.long_description,
-        }
-        rubrics.push(rubric)
-    })
+    try {
+        assignment.rubric.forEach((r) => {
+            // console.log(`rubric: ${JSON.stringify(r)}`)
+            // console.log(`ALT code: ${r.description}\nALT Desc: ${r.long_description}`)
+            let rubric = {
+                id: r.id,
+                alt_code: r.description,
+                alt_text: r.long_description,
+            }
+            rubrics.push(rubric)
+        })
+    } catch(e) {
+        console.log('No rubrics found. Error:',e)
+    }
+    // adds entered score
+    let entered_score = {
+        id: 'entered_score',
+        alt_code: 'Canvas Assignment Point Total',
+        alt_text: 'Sum of points or rubric scores on assignment'
+    }
+    rubrics.push(entered_score)
     return(rubrics)
 }
 
@@ -330,6 +341,19 @@ function getScoresFromSubmissionsByRubricId(submissions, rubric_id) {
                         }
                     }
                 })
+            }
+            if (rubric_id == 'entered_score') { // adds entered score
+                score = {
+                    'course_id': s.course_id,
+                    'canvas_id': s.canvas_id,
+                    'synergy_id': s.synergy_id,
+                    'assign_id': s.assign_id,
+                    'rubric_id' : rubric_id,
+                    'score': s.entered_score,
+                    'excused': s.excused,
+                    'late' : s.late,
+                    'grading_per': s.grading_per,
+                }
             }
         } catch (e) {
             console.log(`Error on score extract ${e}`)
