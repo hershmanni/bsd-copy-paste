@@ -241,6 +241,9 @@ const add_synergy_id = (scores, students) => {
     return(scores)
 }
 
+
+// troubleshoot with from Rick's class...
+// https://bsd.instructure.com/api/v1/courses/111511/assignments/1454402/submissions?include[]=rubric_assessment
 async function getSubmissions(course_id, assignments, assign_id) {
     showLoader(true)
     console.log(`Fetching scores w/ course (${course_id}), assign (${assign_id})`)
@@ -270,7 +273,7 @@ async function getSubmissions(course_id, assignments, assign_id) {
                 // s is a score... s.rubric_assessment: object {_id, }
                 try {
                     if ('rubric_assessment' in s) {
-                    submission = {
+                        submission = {
                             'course_id': course_id,
                             'canvas_id': s.user_id,
                             'assign_id': s.assignment_id,
@@ -280,20 +283,20 @@ async function getSubmissions(course_id, assignments, assign_id) {
                             'late' : s.late,
                             'missing': s.missing,
                             'grading_per': s.grading_period_id,
-                    }
+                        }
                     } else {
-                    submission = {
+                        submission = {
                             'course_id': course_id,
                             'canvas_id': s.user_id,
                             'synergy_id': s.synergy_id,
                             'assign_id': s.assignment_id,
                             'assign_name': assignment.name,
-                            'score': '',
+                            'score': s.score, // the raw score
                             'excused': s.excused,
                             'late' : s.late,
                             'missing': s.missing,
                             'grading_per': s.grading_period_id,
-                    }
+                        }
                     }
                 } catch (e) {
                     console.log(`Error on score: ${JSON.stringify(s)}\nWith error: ${e}`)
