@@ -197,11 +197,11 @@ const getRubrics = (assignment) => {
     } catch(e) {
         console.log('No rubrics found. Error:',e)
     }
-    // adds entered score
+    // adds entered grade
     let entered_score = {
-        id: 'entered_score',
-        alt_code: 'Canvas Assignment Point Total',
-        alt_text: 'Sum of points or rubric scores on assignment'
+        id: 'entered_grade',
+        alt_code: 'Entered Grade',
+        alt_text: 'The grade entered on this assignment in Canvas.'
     }
     rubrics.push(entered_score)
     return(rubrics)
@@ -259,7 +259,7 @@ async function getSubmissions(course_id, assignments, assign_id) {
     } else {
         while (data_length == page_n) {
             let url = `${base_url}/api/v1/courses/${course_id}/assignments/${assign_id}/submissions?include[]=rubric_assessment&page=${page}&per_page=${page_n}`
-            // console.log(`Fetching ${url}`)
+            console.log(`Fetching submissions with ${url}`)
             let res = await fetch(url)
             let text = await res.text()
             let data = await JSON.parse(text)
@@ -291,7 +291,7 @@ async function getSubmissions(course_id, assignments, assign_id) {
                             'synergy_id': s.synergy_id,
                             'assign_id': s.assignment_id,
                             'assign_name': assignment.name,
-                            'score': s.score, // the raw score
+                            'score': String(s.entered_grade).match(/^([N1-8]|CI|G|R)/)[0], // the entered_grade of the submissions
                             'excused': s.excused,
                             'late' : s.late,
                             'missing': s.missing,
@@ -345,14 +345,14 @@ function getScoresFromSubmissionsByRubricId(submissions, rubric_id) {
                     }
                 })
             }
-            if (rubric_id == 'entered_score') { // adds entered score
+            if (rubric_id == 'entered_grade') { // adds entered score
                 score = {
                     'course_id': s.course_id,
                     'canvas_id': s.canvas_id,
                     'synergy_id': s.synergy_id,
                     'assign_id': s.assign_id,
                     'rubric_id' : rubric_id,
-                    'score': s.entered_score,
+                    'score': s.entered_grade,
                     'excused': s.excused,
                     'late' : s.late,
                     'grading_per': s.grading_per,
