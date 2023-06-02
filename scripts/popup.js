@@ -291,7 +291,7 @@ async function getSubmissions(course_id, assignments, assign_id) {
                             'synergy_id': s.synergy_id,
                             'assign_id': s.assignment_id,
                             'assign_name': assignment.name,
-                            'score': String(s.entered_grade).match(/^([N1-8]|CI|G|R)/)[0], // the entered_grade of the submissions
+                            'entered_grade': String(s.entered_grade).match(/^([N1-8]|CI|G|R)/)[0], // the entered_grade of the submissions
                             'excused': s.excused,
                             'late' : s.late,
                             'missing': s.missing,

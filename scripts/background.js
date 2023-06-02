@@ -48,21 +48,25 @@ function getAssignmentById(assignments, assign_id) {
 
 const getRubrics = (assignment) => {
     let rubrics = []
-    assignment.rubric.forEach((r) => {
-        // console.log(`rubric: ${JSON.stringify(r)}`)
-        // console.log(`ALT code: ${r.description}\nALT Desc: ${r.long_description}`)
-        let rubric = {
-            id: r.id,
-            alt_code: r.description,
-            alt_text: r.long_description,
-        }
-        rubrics.push(rubric)
-    })
+    try {
+        assignment.rubric.forEach((r) => {
+            // console.log(`rubric: ${JSON.stringify(r)}`)
+            // console.log(`ALT code: ${r.description}\nALT Desc: ${r.long_description}`)
+            let rubric = {
+                id: r.id,
+                alt_code: r.description,
+                alt_text: r.long_description,
+            }
+            rubrics.push(rubric)
+        })
+    } catch(e) {
+        console.log('Error finding rubrics: ',e)
+    }
     // adds entered score
     let entered_score = {
-        id: 'entered_score',
-        alt_code: 'Canvas Assignment Point Total',
-        alt_text: 'Sum of points or rubric scores on assignment'
+        id: 'entered_grade',
+        alt_code: 'entered_grade',
+        alt_text: 'Canvas entered grade on assignment'
     }
     rubrics.push(entered_score)
     return(rubrics)
@@ -80,6 +84,8 @@ const getRubric = (assignment, rubric_id) => {
 
 function getScoresFromSubmissionsByRubricId(submissions, rubric_id) {
     // submissions objects.keys = {assign_id, canvas_id, excused, grading_per, late, rubric_assessment{}, synergy_id}
+    console.log('getScoresFromSubmissionsByRubricId call w/ submissions, rubric_id', submissions, rubric_id)
+
     if (Object.keys(submissions).length == 0) {
         console.log(`No submissions`)
         return null
@@ -105,14 +111,14 @@ function getScoresFromSubmissionsByRubricId(submissions, rubric_id) {
                     }
                 })
             }
-            if (rubric_id == 'entered_score') { // adds entered score
+            if (rubric_id == 'entered_grade') { // adds entered score
                 score = {
                     'course_id': s.course_id,
                     'canvas_id': s.canvas_id,
                     'synergy_id': s.synergy_id,
                     'assign_id': s.assign_id,
                     'rubric_id' : rubric_id,
-                    'score': s.entered_score,
+                    'score': s.entered_grade,
                     'excused': s.excused,
                     'late' : s.late,
                     'missing': s.missing,
@@ -127,7 +133,7 @@ function getScoresFromSubmissionsByRubricId(submissions, rubric_id) {
             scores.push(score)
         }
     })
-
+    console.log('returning scores', scores)
     return scores
 }
 
@@ -234,6 +240,7 @@ async function call_syn_paste(tabId, submissions, rubric_id, convert_scores_to_c
     }
 
     chrome.tabs.sendMessage(tabId, my_message, (response) => {
+        console.log('scores:',scores)
         console.log(`bg asked tab ${tabId} for paste with ${scores.length} scores and heard: ${response}`)
     })
 }
