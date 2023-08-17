@@ -114,7 +114,7 @@ const add_comment_codes_to_score = (score, roundUpFrom) => {
     // Outcome scores are coming in rounded... fix that with rounding the score
     let rounded_score = ''
     try {
-        if (['CI','G','R'].includes(my_score)) {
+        if (['CI','G','R','N'].includes(my_score)) {
             rounded_score = my_score
         } else {
             
@@ -136,18 +136,18 @@ const add_comment_codes_to_score = (score, roundUpFrom) => {
     // console.log('my_score and rounded_score', my_score, rounded_score)
 
     if (score.excused) {
-        return (`Exc`)
+        return (`ex`)
     }
 
     if (score.missing) {
-        return('Mi')
+        return('mi !ex')
     }
 
     if (score.late) {
-        return(`${rounded_score} La`)
+        return(`${rounded_score} la !ex`)
     }
 
-    return(`${rounded_score} !`) // score is not exc, missing, late in canvas
+    return(`${rounded_score} ! !ex`) // score is not exc, missing, late in canvas
 }
 
 function getScore(scores, id) {
