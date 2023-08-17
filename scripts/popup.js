@@ -355,6 +355,7 @@ function getScoresFromSubmissionsByRubricId(submissions, rubric_id) {
                     'score': s.entered_grade,
                     'excused': s.excused,
                     'late' : s.late,
+                    'missing': s.missing,
                     'grading_per': s.grading_per,
                 }
             }
