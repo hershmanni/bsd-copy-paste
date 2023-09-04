@@ -6,27 +6,29 @@
       <script src="scripts/jquery-ui.js"></script>
       <link rel="stylesheet" href="scripts/jquery-ui.css" />
       <link rel="stylesheet" href="styles/popup.css" />
-      <style>
-        #back {
-          margin-left: 20px;
-          background-color: #ad39cd;
-        }
-
-        button {
-          margin-bottom: 20px;
-        }
-      </style>
+      <link rel="stylesheet" href="styles/options.css" />
   </head>
   <body>
     <h1>BSD Copy Paste:: Options Page</h1>   
     <p>
       <label for="amount">Round up if decimal is at least: </label>
-      <input type="number" id="amount" style="border:0; color:#008cff; font-weight:bold; width: 100px; height: 2pc;">
+      <input type="number" id="amount">
     </p>
      
     <div id="rounding"></div>
 
-    <div id="explanation"></div>
+    <div id="rounding_explanation"></div>
+
+    <div id="canvas_zero_to_synergy_val">
+      <form>
+        <fieldset>
+          <legend>Convert Canvas <b>0</b> to Synergy <span></span></legend>
+          <label class='form-control'><input type="radio" value="mi" name="zero_as" />mi</label>
+          <label class='form-control'><input type="radio" value="N" name="zero_as" />N</label>
+          <label class='form-control'><input type="radio" value="1" name="zero_as">1</label>
+        </fieldset>
+      </form>
+    </div>
 
     <div id="status"></div>
     
