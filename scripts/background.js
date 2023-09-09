@@ -71,7 +71,11 @@ const getRubric = (assignment, rubric_id) => {
     return(rubric)
 }
 
-function getScoresFromSubmissionsByRubricId(submissions, rubric_id) {
+function convertZero() {
+    // fetch replacement value for canvas Zero
+}
+
+function getScoresFromSubmissionsByRubricId(submissions, rubric_id, is_blt) {
     // submissions objects.keys = {assign_id, canvas_id, excused, grading_per, late, rubric_assessment{}, synergy_id}
     if (Object.keys(submissions).length == 0) {
         console.log(`No submissions`)
@@ -200,16 +204,16 @@ function bg_syn_update(score, synergy_id, row_index, col_index) {
     .trigger('change')
 }
 
-async function call_syn_paste(tabId, submissions, rubric_id, convert_scores_to_cgr) {
-    console.log(`call_syn_paste received: tabId, submissions, rubric_id, convert_scores_to_cgr:`, tabId, submissions, rubric_id, convert_scores_to_cgr)
+async function call_syn_paste(tabId, submissions, rubric_id, is_blt) {
+    console.log(`call_syn_paste received: tabId, submissions, rubric_id, is_blt:`, tabId, submissions, rubric_id, is_blt)
 
-    let scores = getScoresFromSubmissionsByRubricId(submissions, rubric_id)
+    let scores = getScoresFromSubmissionsByRubricId(submissions, rubric_id, is_blt)
 
     let roundUpFrom = await getRoundingDecimal()
 
     console.log(`bg call_syn_paste, roundUpFrom (${roundUpFrom})`)
     // unfortunately this call is proceeding without getting the roundingDecimall... consider using then and wrapping.
-    if (convert_scores_to_cgr) {
+    if (is_blt) {
         scores = use_cgr(scores, roundUpFrom)
     }
 
@@ -249,11 +253,11 @@ function contextListener(info, tab) {
 
                 let rubric_text = getRubric(assignment, rubric_id).alt_code
                 // console.log(rubric_text)
-                let convert_scores_to_cgr = false
+                let is_blt = false
                 if  (rubric_text.includes('BLT')) {
-                    convert_scores_to_cgr = true
+                    is_blt = true
                 }
-                call_syn_paste(tab.id, submissions, rubric_id, convert_scores_to_cgr)
+                call_syn_paste(tab.id, submissions, rubric_id, is_blt)
             }
         })
     })
