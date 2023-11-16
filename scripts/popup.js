@@ -694,6 +694,18 @@ function getCourseIdFromAssignments(assignments) {
 }
 
 
+// From SO
+// https://stackoverflow.com/questions/14645806/get-all-attributes-of-an-element-using-jquery
+function getAttributes ( $node ) {
+    var attrs = {};
+    $.each( $node[0].attributes, function ( index, attribute ) {
+        attrs[attribute.name] = attribute.value;
+    } );
+
+    return attrs;
+}
+
+
 function makeSubmissionsTable(submissions, rubrics) {
     // display all submissions accounting for different types of data available.
     // submissions may have scores for rubrics but maybe not...
@@ -712,14 +724,15 @@ function makeSubmissionsTable(submissions, rubrics) {
         my_table += `<td class="rotate"><div>${col}</div></td>`
     })
     my_table += `</tr></thead>\n<tbody>`
+    let row_index = 0
     submissions.forEach((s) => {
 
         // console.log('adding syn_id for submission',s)
         //id
-        my_table += `<tr><td>${s.period}</td><td>${s.synergy_id.slice(0,6)}</td>`
+        my_table += `<tr data-row="${row_index}"><td>${s.period}</td><td>${s.synergy_id.slice(0,6)}</td>`
         //name + link to speedGrade
         my_table += `<td><a target=_blank href="${base_url}/courses/${s.course_id}/gradebook/speed_grader?assignment_id=${s.assign_id}&student_id=${s.canvas_id}">${s.sortable_name.slice(0,35)}</a></td>`
-
+        let col_index = 1
         if ('rubric_assessment' in s) {
             
             rubrics.forEach((r) =>{
@@ -731,15 +744,16 @@ function makeSubmissionsTable(submissions, rubrics) {
                 } 
 
                 if (rubric_score == undefined) {
-                    my_table += `<td class="undefined">???</td>`
+                    my_table += `<td data-editable="true" data-col="${col_index}" data-type="rubric_score" data-assign-id="${s.assign_id}" data-rubric-id="${r.id}" data-student-id="${s.synergy_id}" class="undefined">???</td>`
                 } else {
-                    my_table += `<td>${rubric_score}</td>`
+                    my_table += `<td data-editable="true" data-col="${col_index}" data-type="rubric_score" data-assign-id="${s.assign_id}" data-rubric-id="${r.id}" data-student-id="${s.synergy_id}">${rubric_score}</td>`
                 }
+                col_index ++;
         })
         } else {
             rubrics.forEach((r) => {
                 // no rubric assessment in submission
-                my_table += '<td></td>'
+                my_table += '<td data-editable="true" data-col="${col_index}" data-type="rubric_score" data-assign-id="${s.assign_id}" data-rubric-id="${r.id}" data-student-id="${s.synergy_id}"></td>'
             })
         }
         
@@ -747,23 +761,29 @@ function makeSubmissionsTable(submissions, rubrics) {
 
         // change look of missing/late/excused
         let my_vals = [s.missing, s.late, s.excused]
+        let my_vals_names = ['missing','late','excused']
+        let vIndex = 0
         my_vals.forEach((val) => {
             let show = ''
             if (val === true) {
                 show = '&#x2713;'
                 console.log('Submission:',s,'my_vals:',val,'showing',show)
             }
-            my_table += `<td>${show}</td>`
+            my_table += `<td data-editable="true" data-col="${col_index}" data-type="${my_vals_names[vIndex]}" data-assign-id="${s.assign_id}" data-student-id="${s.synergy_id}">${show}</td>`
+            vIndex++;
+            col_index++;
         })
 
         /* points* */
         if (s.entered_score == null) {
-            my_table += `<td></td>`
+            my_table += `<td data-editable="true" data-col="${col_index}" data-type="entered_score" data-assign-id="${s.assign_id}" data-student-id="${s.synergy_id}"></td>`
         } else {
-            my_table += `<td>${s.entered_score}</td>`
+            my_table += `<td data-editable="true" data-col="${col_index}" data-type="entered_score" data-assign-id="${s.assign_id}" data-student-id="${s.synergy_id}">${s.entered_score}</td>`
         }
+        col_index++;
 
         my_table += `</tr>`
+        row_index++;
     })
 
     my_table += '</tbody></table>'
@@ -782,9 +802,98 @@ function makeSubmissionsTable(submissions, rubrics) {
 
     $('div#assign_submissions').append($('<p><b>Points*</b> will not be pasted by the extension, make sure to enter a rubric score.</p>').addClass('point_note'))
 
-    // table.columns.adjust().draw()
+    $('div#assign_submissions table#submissions tbody td[data-editable="true"]').each((index, el) => {
+        // console.log('submission table obj:',index, el)
+        $(el).click(function() {
+            if ($(this).has('input').length>0) {
+                console.log('Already have input in this cell! do nothing', $(this).has('input'),'this obj',$(this).eq(0))
+            } else {
+            // console.log('Just received click from',el)
+            console.log('Adding input', $(this).has('input'),'this obj',$(this).eq(0))
+            let my_val = el.innerText
+            if (my_val === '&#x2713;') {
+                my_val = true
+            }
 
-    
+            let td_attrs = getAttributes($(this))
+
+            var input = $('<input class="click_cell" type="text" />')
+            if (['missing','late','excused'].includes(td_attrs['data-type'])) {
+                // change input to checkbox
+                input.attr('type','checkbox')
+                if (my_val) {
+                    $(input).prop('checked', true)
+                }
+            }
+            
+            // console.log('Just received click from',el,'with val',my_val,'td attributes',td_attrs, 'data-type',td_attrs['data-type'])
+            $(this).html(input.val(my_val))
+            $(this).children('input').select()
+            $(input).keydown((event) => {
+                // console.log('event key', event.key)
+                // let row = $(this).parent('tr').attr('data-row')
+                // let col = $(this).attr('data-col')
+                // console.log('Keypress from ',row,col)
+                // This will break when sort is applied... need to search dom instead
+
+                if (event.key === "Enter" | event.key === 'ArrowDown') {
+                    console.log(event.key)
+                    if ($(this).parent('tr').next('tr')) {
+                        let colIndex = $(this).index()
+                        $(this).parent('tr').next().children().eq(colIndex).click()
+                    }
+
+                } else if (event.key === "ArrowRight") {
+                    console.log('right')
+                    if ($(this).next().attr('data-editable')) {
+                        $(this).next().click()
+                    }
+                } else if (event.which == 9) {
+                    event.preventDefault()
+                    console.log('Tab')
+                    if ($(this).next().attr('data-editable')) {
+                        $(this).next().click()
+                    } else {
+                        
+                    }
+                } else if (event.key === 'ArrowLeft') {
+                    console.log('left')
+                    if ($(this).prev().attr('data-editable')) {
+                        $(this).prev().click()
+                    }
+                } else if (event.key === 'ArrowUp') {
+                    console.log('up')
+                    if ($(this).parent('tr').prev('tr')) {
+                        let colIndex = $(this).index()
+                        $(this).parent('tr').prev().children().eq(colIndex).click()
+                    }
+                }
+            
+                if (['Enter','ArrowRight','ArrowLeft','ArrowUp','ArrowDown'].includes(event.key)) {
+                    $(input).blur()
+                }
+                
+                
+            })
+
+            $(input).blur(function(){
+                let new_val = $(input).val()
+                if ($(input).attr('type') == "checkbox") {
+                    console.log('Checkbox is now checked?',$(input).is(':checked'))
+                    new_val = $(input).is(':checked') ? '&#x2713;' : ''
+                }
+                
+                let parent_td = $(this).parent('td')
+                console.log(`Just blurred. Old val: ${my_val}, new_val: ${new_val}`)
+                parent_td.remove('input')
+                parent_td.html(new_val)
+            })
+
+            // $(el).attr('data-input',true)
+            }
+        })
+    })
+    // table.columns.adjust().draw()    
 }
 
 function update_rubric_list(assignments, submissions) {

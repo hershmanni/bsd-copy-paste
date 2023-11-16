@@ -91,6 +91,20 @@ table#submissions {
     width: 85% !important;
 }
 
+table#submissions td input.click_cell{
+  width: 80%;
+  margin: 0;
+  background: #f5f573;
+  color: black;
+}
+
+table#submissions td input.click_cell[type="checkbox"] {
+  width: auto; /* left aligns the checkboxes */
+  margin: 0;
+  background: #f5f573;
+  color: black;
+}
+
 table#submissions thead {
     height: 120px;
     white-space: nowrap;
