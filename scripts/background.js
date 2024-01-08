@@ -448,3 +448,6 @@ addContextListener()
 //     console.log('Background knows that unload is coming soon... time to disable contextMenus?')
 //     chrome.ContextMenus.removeAll()
 // })
+
+//TODO: implement https://stackoverflow.com/questions/23895377/sending-message-from-a-background-script-to-a-content-script-then-to-a-injected/23895822#23895822
+//Fix error unresponsive synergy.js on extension install...
