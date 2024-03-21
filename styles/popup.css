@@ -13,7 +13,7 @@ div#header {
     background: url(../images/arrow-32.png) no-repeat;
 }
 
-div h6 {
+div h6, div h2 {
     margin-left: 40px;
 }
 

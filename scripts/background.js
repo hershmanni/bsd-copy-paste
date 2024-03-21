@@ -412,11 +412,15 @@ function mainListener(request, sender, sendResponse) {
                     setupContextMenu(assignments, submissions)
                 })
                 getRoundingDecimal().then((roundUpFrom) => {
-                    let response = {
-                        'roundUpFrom': roundUpFrom,
-                        'submissions': submissions
-                    }
-                    sendResponse(response)
+                    getMissingPref().then((missingPref) => {
+                        let response = {
+                            'roundUpFrom': roundUpFrom,
+                            'missingPref': missingPref,
+                            'submissions': submissions
+                        }
+                        sendResponse(response)
+                    })
+                    
                 })
                 
             }

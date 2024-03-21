@@ -676,7 +676,7 @@ function update_submissions_overview(submissions) {
     try {
         if (submissions.length > 0) {
             let assign_name = getAssignmentNameFromSubmissions(submissions)
-            $('div#assign_submissions').html(`<p>Found ${submissions.length} submissions for <em>${assign_name}</em>.</p><p>The table below can be useful to see marks for this assignment that will be pasted. Click on a student's name to open a speedgrader tab and edit their scores.</p>`)
+            $('div#assign_submissions').html(`<p><b>Score Table</b>. Found ${submissions.length} submissions for <em>${assign_name}</em>.</p><p>The table below can be useful to see marks for this assignment that will be pasted. Click on a student's name to open a speedgrader tab and edit their scores.</p>`)
         } else {
             $('div#assign_submissions').html(`<p>🥹 No submissions found 🥹</p>`)
         }
@@ -930,7 +930,40 @@ $('#clear_btn button').click(() => {
 
 function updateRounding(rounded = 0.5) {
     let rounded_txt = String(rounded).slice(1)
-    $('#overall_rounding').html(`<p>Rounding <em>up</em> decimals at and above <a href="options.html">${rounded_txt}<a></p>`)
+    $('#overall_rounding').html(`<p>Rounding <em>up</em> decimals at and above <a href="options.html">${rounded_txt}</a></p>`)
+}
+
+async function getMissingPref() {
+    let p = new Promise((resolve, reject) => {
+        chrome.storage.sync.get(
+            keys = {
+                missingPref: "skip"
+            },
+            (items) => {
+                chrome.runtime.lastError
+                ? reject(Error(chrome.runtime.lastError.message))
+                : resolve (items.missingPref)
+            }
+        )
+    })
+    return p
+}
+
+async function updateMissing() {
+    getMissingPref().then((missingPref) => {
+        let description = ''
+        switch(missingPref) {
+            case 'score':
+                description = 'Enter a "N !ex" or "R !ex"'
+                break
+            case 'comment':
+                description = 'Enter "Mi !ex"'
+                break
+            case 'skip':
+                description = "Skip the student"
+        }
+        $('#missing').html(`<p><b>Missing/Zero Marks in Canvas</b>. When assignment is marked <b>missing</b> or score is <b>0</b>: <a href="options.html">${description}</a></p>`)
+    })
 }
 
 /*
@@ -992,6 +1025,7 @@ let my_message = {
 
 chrome.runtime.sendMessage(my_message, (response) => {
     let roundUpFrom = response.roundUpFrom
+    let missingPref = response.missingPref
     let submissions = response.submissions
     if (Object.keys(submissions).length > 0) {
         if (assignments.length > 0) {
@@ -1002,6 +1036,7 @@ chrome.runtime.sendMessage(my_message, (response) => {
             let assignment = getAssignmentById(assignments, assign_id)
             update_submissions_overview(submissions)
             updateRounding(roundUpFrom)
+            updateMissing()
             makeSubmissionsTable(submissions, getRubrics(assignment))
         } else {
             console.log(`submissions received but no assignments sent... problem!`)
