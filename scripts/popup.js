@@ -676,7 +676,7 @@ function update_submissions_overview(submissions) {
     try {
         if (submissions.length > 0) {
             let assign_name = getAssignmentNameFromSubmissions(submissions)
-            $('div#assign_submissions').html(`<p><b>Score Table</b>. Found ${submissions.length} submissions for <em>${assign_name}</em>.</p><p>The table below can be useful to see marks for this assignment that will be pasted. Click on a student's name to open a speedgrader tab and edit their scores.</p>`)
+            $('div#assign_submissions').html(`<p><b>Score Table</b>. Found ${submissions.length} submissions for <em>${assign_name}</em>.</p><p>The table below can be useful to see marks for this assignment that will be pasted. Click on a student's name to open a speedgrader tab and edit their scores. Click on the column headers ("Name" or "Missing" or one of the Learning Targets) to re-sort the table.</p>`)
         } else {
             $('div#assign_submissions').html(`<p>🥹 No submissions found 🥹</p>`)
         }
@@ -890,6 +890,7 @@ async function fetch_assign_click() {
     update_assign_select(assignments)
     send_to_background(assignments, 'assignments')
     process_assign_change(course_id,assignments)
+    updateMissing()
 }
 
 async function clear_button_click() {
