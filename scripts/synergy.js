@@ -188,7 +188,7 @@ async function synergy_paste(scores, roundUpFrom, missingPref, use_cgr) {
     await asyncForEach(synergy_ids, async (id) => {
         let score = getScore(scores, id)
         
-        if (score != null & !(score.missing & missingPref == 'skip')) {    
+        if (score != null & !((score.missing || score.score === 0) & missingPref == 'skip')) {    
             let row_index = synergy_scores_table.find('span.student-perm-id:contains("'+id+'")').closest('tr').attr('aria-rowindex')
 
             let message = {
