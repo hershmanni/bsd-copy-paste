@@ -58,7 +58,7 @@ async function asyncForEach(array, callback) {
 
 
 // TODO: update late/missing/exc processing
-const add_comment_codes_to_score = (score, roundUpFrom) => {
+const add_comment_codes_to_score = (score, roundUpFrom, missingPref, use_cgr) => {
     let my_score = score.score
 
     // Outcome scores are coming in rounded... fix that with rounding the score
@@ -92,7 +92,20 @@ const add_comment_codes_to_score = (score, roundUpFrom) => {
 
     // TODO fix handling of rounded_score. Move to options - give option of 0 == N or Missing (for non behavior targets)
     if (score.missing | rounded_score === 0) {
-        return('mi !ex')
+        console.log(`Processing missing/0 with missingPref: ${missingPref} || and use_cgr: ${use_cgr}`)
+        switch(missingPref) {
+            case "comment":
+                return('mi !ex')
+                break
+            case "score":
+                if (use_cgr) return 'R !ex'
+                else return('N !ex')
+            case "skip":
+                return(null)
+            default:
+                return('SKIP')
+        }
+        
     }
 
     if (score.late) {
@@ -132,7 +145,7 @@ function synergy_env_ready() {
     return(ready)
 }
 
-async function synergy_paste(scores, roundUpFrom) {
+async function synergy_paste(scores, roundUpFrom, missingPref, use_cgr) {
     console.log('Processing synergy paste with scores...',scores)
 
     let col_index = $(window.frames[0].document.activeElement).closest('td').attr('aria-colindex')
@@ -151,8 +164,10 @@ async function synergy_paste(scores, roundUpFrom) {
     })
 
     scores.forEach((score) => {
-        score.score = add_comment_codes_to_score(score, roundUpFrom)
+        score.score = add_comment_codes_to_score(score, roundUpFrom, missingPref, use_cgr)
+        console.log(`Score found ${score.score}`)
     })
+
 
     // console.log(`score_ids ${score_ids} & col: ${col_index}`);
     // console.log(`synergy_scores_table: ${synergy_scores_table}`)
@@ -173,7 +188,7 @@ async function synergy_paste(scores, roundUpFrom) {
     await asyncForEach(synergy_ids, async (id) => {
         let score = getScore(scores, id)
         
-        if (score != null) {    
+        if (score != null & !(score.missing & missingPref == 'skip')) {    
             let row_index = synergy_scores_table.find('span.student-perm-id:contains("'+id+'")').closest('tr').attr('aria-rowindex')
 
             let message = {
@@ -215,7 +230,7 @@ function myListener(request, sender, sendResponse) {
         console.log(`Synergy.js received request from background with request.attachment:`)
         console.log(request.attachment)
         if (synergy_env_ready()) {
-            synergy_paste(request.attachment, request.roundUpFrom)
+            synergy_paste(request.attachment, request.roundUpFrom, request.missingPref, request.use_cgr)
             .then((response) =>{
                 sendResponse('Synergy.js made you a paste!')
             })

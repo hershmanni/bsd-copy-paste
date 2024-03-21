@@ -13,12 +13,15 @@
         }
 
         button {
+          margin-top: 20px;
           margin-bottom: 20px;
         }
       </style>
   </head>
   <body>
-    <h1>BSD Copy Paste:: Options Page</h1>   
+    <h1>BSD Copy Paste:: Options Page</h1>
+
+    <h2>Mark rounding</h2>
     <p>
       <label for="amount">Round up if decimal is at least: </label>
       <input type="number" id="amount" style="border:0; color:#008cff; font-weight:bold; width: 100px; height: 2pc;">
@@ -28,6 +31,13 @@
 
     <div id="explanation"></div>
 
+    <div id="missing">
+      <h2>Missing Canvas Assignments</h2><p>When Canvas assignment is marked <b>missing</b>, what should be pasted in Synergy?</p>
+      <input type="radio" id="cmt" name="missing" value="comment" /><label for="cmt">Comment ("Mi")</label>
+      <input type="radio" id="scr" name="missing" value="score" /><label for="scr">Score (N or R)</label>
+      <input type="radio" id="skip" name="missing" value="skip" /><label for="skip">Skip</label>
+      
+    </div>
     <div id="status"></div>
     
     <button id="save">Save</button>

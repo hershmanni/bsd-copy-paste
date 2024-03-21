@@ -36,6 +36,9 @@ $('#amount').on('input',() => {
     
 })
 
+
+
+
 if (window.history.length > 1) {
   $('#back').text('Back')
   $('#back').on('click',() => {
@@ -52,11 +55,12 @@ if (window.history.length > 1) {
 
 const saveOptions = () => {
   var rounding = $('#rounding').slider('value');
-
-    console.log(`Save options w/ rounding = ${rounding}`)
+  var missing = $('#missing input[type="radio"][name="missing"]:checked').val();
+    console.log(`Save options w/ rounding = ${rounding}\n missing = ${missing}`)
   chrome.storage.sync.set(
     { 
-        roundUpFrom: rounding
+        roundUpFrom: rounding,
+        missingPref: missing
     },
     () => {
       // Update status to let user know options were saved.
@@ -74,14 +78,20 @@ const saveOptions = () => {
 const restoreOptions = () => {
   chrome.storage.sync.get(
     keys = {
-        roundUpFrom: 0.5 
+        roundUpFrom: 0.5,
+        missingPref: "skip"
     },
     (items) => {
-        let val = items.roundUpFrom
-        console.log(`Setting rounding to ${val}...`)
-        $('#rounding').slider('value', val)
+        let rounding = items.roundUpFrom
+        console.log(`Setting rounding to ${rounding}...`)
+        $('#rounding').slider('value', rounding)
         $("#amount").val($("#rounding").slider("value"))
-        updateExplanation(val)
+        updateExplanation(rounding)
+
+        let missing = items.missingPref
+        console.log(`Setting missing pref to ${missing}...`)
+        console.log($(`#missing input:radio[value="${missing}"]`))
+        $(`#missing input:radio[value="${missing}"]`).trigger('click')
     }
   )
 }

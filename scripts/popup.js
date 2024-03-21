@@ -879,6 +879,8 @@ async function fetch_assign_click() {
         return(null)
     }
 
+    // TODO: Can we make the assignments window open in Synergy as well as Canvas so you can view paste on same screen?
+
     /* Fetch assignments */
     // window.location.href.match(/courses\/(\d+)\//)[1]  // (returns course_id)
     course_id = tabs[0].url.match(/courses\/(\d+)\//)[1]

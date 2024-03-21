@@ -24,6 +24,22 @@ async function getRoundingDecimal() {
     return p
 }
 
+async function getMissingPref() {
+    let p = new Promise((resolve, reject) => {
+        chrome.storage.sync.get(
+            keys = {
+                missingPref: "skip"
+            },
+            (items) => {
+                chrome.runtime.lastError
+                ? reject(Error(chrome.runtime.lastError.message))
+                : resolve (items.missingPref)
+            }
+        )
+    })
+    return p
+}
+
 function getAssignmentIdFromSubmissions(submissions) {
     return submissions[0].assign_id
 }
@@ -223,6 +239,7 @@ async function call_syn_paste(tabId, submissions, rubric_id, convert_scores_to_c
     let scores = getScoresFromSubmissionsByRubricId(submissions, rubric_id)
 
     let roundUpFrom = await getRoundingDecimal()
+    let missingPref = await getMissingPref()
 
     console.log(`bg call_syn_paste, roundUpFrom (${roundUpFrom})`)
     // unfortunately this call is proceeding without getting the roundingDecimall... consider using then and wrapping.
@@ -236,6 +253,8 @@ async function call_syn_paste(tabId, submissions, rubric_id, convert_scores_to_c
         title: 'synergy_paste',
         body: 'Please paste values now',
         roundUpFrom: roundUpFrom,
+        missingPref: missingPref,
+        use_cgr: convert_scores_to_cgr,
         attachment: scores
     }
 
