@@ -223,14 +223,20 @@ function bg_syn_update(score, synergy_id, row_index, col_index) {
         // console.log(`Writing score!`);
     }
 
-    table
+    let myObj = table
     .find('tr[aria-rowindex="'+row_index+'"]')
     .find('td[aria-colindex="'+col_index+'"]')
     .find('div.asgn-cell-wrap')
+
+    // storing object will help with finding input/div to blur event after input value change.
+    myObj
     .click()
     .find('input')
     .val(score)
     .trigger('change')
+
+    // blur cell
+    myObj.find('input').closest('div').trigger('blur')
 }
 
 async function call_syn_paste(tabId, submissions, rubric_id, convert_scores_to_cgr) {

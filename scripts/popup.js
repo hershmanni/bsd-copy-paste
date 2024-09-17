@@ -522,19 +522,23 @@ async function getStudents(course_id) {
         }
 
         console.log('section',s,'has period',period)
+        
+        try {
+            s.students.forEach((e) => {
 
-        s.students.forEach((e) => {
-
-            // console.log(e.id, e.login_id, e.sortable_name, e.short_name)
-            let student = {
-                'canvas_id': e.id,
-                'synergy_id': e.login_id,
-                'short_name': e.short_name,
-                'sortable_name': e.sortable_name,
-                'period': period
-            }
-            students.push(student)
-        })
+                // console.log(e.id, e.login_id, e.sortable_name, e.short_name)
+                let student = {
+                    'canvas_id': e.id,
+                    'synergy_id': e.login_id,
+                    'short_name': e.short_name,
+                    'sortable_name': e.sortable_name,
+                    'period': period
+                }
+                students.push(student)
+            })
+        } catch(e) {
+            console.log('Error processing student list',e)
+        }
     })
     console.log(`Students found: ${students.length}`, students)
     // console.log(students[3])
