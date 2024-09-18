@@ -1,6 +1,6 @@
 {
   "name": "BSD Copy Paste",
-  "version": "1.105", 
+  "version": "1.106", 
   "manifest_version": 3, 
   "description": "Copy grades from Canvas to Synergy!",
   "action": {
