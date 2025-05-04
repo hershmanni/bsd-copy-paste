@@ -458,7 +458,7 @@ function countScoresFromSubmissionsByRubricId(submissions, rubric_id) {
             } else if (s.missing) {
                 missing.push(s)
             } else {
-                console.log(`Student ${s.short_name} not counted. See submission object`,s)
+                console.log(`%cStudent ${s.short_name} not counted. See submission object`,'color: #f9b1b1;',s)
                 skipped_entirely.push(s)
             }
 
@@ -475,7 +475,7 @@ function countScoresFromSubmissionsByRubricId(submissions, rubric_id) {
         }
     })
 
-    console.log(`popup found ${rubric_scores.length} scores and ${missing.length} missing and ${skipped_entirely.length} results that won't paste.`)
+    console.log(`%cpopup found ${rubric_scores.length} scores and ${missing.length} missing and ${skipped_entirely.length} results that won't paste.`,'color: #b4f7fe;')
     //console.log(`ALERT: calling use_fake_synergy_ids to swap sis_nums to match syntrn - fake sis_nums... remove in production!`)
     //scores = use_fake_synergy_ids(scores)
 
@@ -754,8 +754,10 @@ function makeSubmissionsTable(submissions, rubrics) {
         my_vals.forEach((val) => {
             let show = ''
             if (val === true) {
-                show = '&#x2713;'
-                console.log('Submission:',s,'my_vals:',val,'showing',show)
+                // show = '&#x2713;'
+                // show = '✅';
+                show = '\u{2713}'; // in chrome dev console... use unicode character to get emoji to display!
+                // console.log('Submission:',s,'my_vals:',val,show)
             }
             my_table += `<td>${show}</td>`
         })
