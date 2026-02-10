@@ -1129,6 +1129,18 @@ function ensureMapperStyles() {
             color: #b4f7fe;
         }
 
+        #bsd-mapper-panel .bsd-panel-settings {
+            display: grid;
+            grid-template-columns: 1fr 1fr auto;
+            gap: 8px;
+            align-items: end;
+            margin-bottom: 10px;
+        }
+
+        #bsd-mapper-panel .bsd-panel-settings .bsd-save-settings {
+            min-height: 28px;
+        }
+
         #bsd-map-cards {
             display: flex;
             flex-direction: column;
@@ -1163,6 +1175,7 @@ function ensureMapperStyles() {
         }
 
         .bsd-field select,
+        .bsd-field input,
         .bsd-map-row select {
             width: 100%;
             background: #2b3138;
@@ -1232,6 +1245,10 @@ function ensureMapperStyles() {
         }
 
         @media (max-width: 980px) {
+            #bsd-mapper-panel .bsd-panel-settings {
+                grid-template-columns: 1fr;
+            }
+
             .bsd-card-grid {
                 grid-template-columns: 1fr;
             }
@@ -1275,6 +1292,21 @@ function ensureMapperPanel() {
                 <button id="bsd-close-panel" class="bsd-close" type="button">Close</button>
             </div>
             <div id="bsd-mapper-status"></div>
+            <div class="bsd-panel-settings">
+                <div class="bsd-field">
+                    <label for="bsd-round-up-from">Round up when decimal is at least</label>
+                    <input id="bsd-round-up-from" type="number" min="0.01" max="0.99" step="0.01">
+                </div>
+                <div class="bsd-field">
+                    <label for="bsd-missing-pref">Canvas missing or zero score</label>
+                    <select id="bsd-missing-pref">
+                        <option value="skip">Skip</option>
+                        <option value="comment">Comment (Mi)</option>
+                        <option value="score">Score (N/R)</option>
+                    </select>
+                </div>
+                <button id="bsd-save-settings" class="bsd-save-settings" type="button">Save Settings</button>
+            </div>
             <div class="bsd-controls">
                 <button id="bsd-refresh-data" type="button">Refresh Data</button>
                 <button id="bsd-add-mapping" type="button">Add Assignment</button>
@@ -1312,6 +1344,84 @@ function ensureMapperPanel() {
 
     mapperQuery('#bsd-paste-all').on('click', async () => {
         await pasteAllMappings()
+    })
+
+    mapperQuery('#bsd-save-settings').on('click', () => {
+        saveMapperSettingsFromUi(true)
+    })
+
+    mapperQuery('#bsd-round-up-from').on('change', () => {
+        saveMapperSettingsFromUi(false)
+    })
+
+    mapperQuery('#bsd-missing-pref').on('change', () => {
+        saveMapperSettingsFromUi(false)
+    })
+}
+
+function normalizeRoundUpFromValue(rawValue, fallback = 0.5) {
+    let parsed = Number(rawValue)
+    if (!Number.isFinite(parsed)) {
+        parsed = Number(fallback)
+    }
+    if (!Number.isFinite(parsed)) {
+        parsed = 0.5
+    }
+
+    parsed = Math.max(0.01, Math.min(0.99, parsed))
+    return Math.round(parsed * 100) / 100
+}
+
+function normalizeMissingPrefValue(rawValue, fallback = 'skip') {
+    let value = String(rawValue || fallback || 'skip')
+    if (!['skip', 'comment', 'score'].includes(value)) {
+        return 'skip'
+    }
+    return value
+}
+
+function getMissingPrefLabel(missingPref) {
+    switch (missingPref) {
+        case 'comment':
+            return 'Comment (Mi)'
+        case 'score':
+            return 'Score (N/R)'
+        case 'skip':
+        default:
+            return 'Skip'
+    }
+}
+
+function updateMapperSettingsUiFromState() {
+    let roundUpFrom = normalizeRoundUpFromValue(mapperState.roundUpFrom, 0.5)
+    let missingPref = normalizeMissingPrefValue(mapperState.missingPref, 'skip')
+
+    mapperState.roundUpFrom = roundUpFrom
+    mapperState.missingPref = missingPref
+
+    mapperQuery('#bsd-round-up-from').val(roundUpFrom.toFixed(2))
+    mapperQuery('#bsd-missing-pref').val(missingPref)
+}
+
+function saveMapperSettingsFromUi(showStatus = false) {
+    let roundUpFrom = normalizeRoundUpFromValue(mapperQuery('#bsd-round-up-from').val(), mapperState.roundUpFrom)
+    let missingPref = normalizeMissingPrefValue(mapperQuery('#bsd-missing-pref').val(), mapperState.missingPref)
+
+    mapperState.roundUpFrom = roundUpFrom
+    mapperState.missingPref = missingPref
+    updateMapperSettingsUiFromState()
+
+    chrome.storage.sync.set({
+        roundUpFrom: roundUpFrom,
+        missingPref: missingPref
+    }, () => {
+        if (chrome.runtime.lastError) {
+            setMapperStatus(`Could not save settings: ${chrome.runtime.lastError.message}`, true)
+            return
+        }
+        if (showStatus) {
+            setMapperStatus(`Settings saved. Round-up: ${roundUpFrom.toFixed(2)}. Missing: ${getMissingPrefLabel(missingPref)}.`)
+        }
     })
 }
 
@@ -2109,13 +2219,14 @@ async function loadMapperStateFromStorage() {
         mapperState.submissionsByAssignment[fallback_assign_id] = local.submissions
     }
 
-    mapperState.roundUpFrom = sync.roundUpFrom
-    mapperState.missingPref = sync.missingPref
+    mapperState.roundUpFrom = normalizeRoundUpFromValue(sync.roundUpFrom, 0.5)
+    mapperState.missingPref = normalizeMissingPrefValue(sync.missingPref, 'skip')
     mapperState.mappings = Array.isArray(local[mapperStorageKey]) ? local[mapperStorageKey] : []
 }
 
 async function refreshMapperPanel() {
     await loadMapperStateFromStorage()
+    updateMapperSettingsUiFromState()
     mapperQuery('#bsd-map-cards').html('')
     mappingCardCounter = 0
     mappingRowCounter = 0
