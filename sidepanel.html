@@ -1,0 +1,90 @@
+<!doctype html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Canvas to Synergy Mapper</title>
+    <link rel="stylesheet" href="styles/sidepanel.css">
+</head>
+<body>
+    <div id="bsd-sidepanel">
+        <div class="bsd-panel-head">
+            <h2>Canvas to Synergy Mapper</h2>
+        </div>
+
+        <div id="bsd-mapper-status"></div>
+
+        <div class="bsd-canvas-source">
+            <div class="bsd-canvas-source-head">
+                <span class="bsd-canvas-source-title">Canvas Source</span>
+                <div class="bsd-canvas-source-head-actions">
+                    <button id="bsd-load-canvas-courses" type="button">Load Courses</button>
+                    <button id="bsd-fetch-course-assignments" type="button">Fetch Assignments</button>
+                    <button id="bsd-stop-canvas-fetch" type="button" disabled>Stop</button>
+                </div>
+            </div>
+            <div class="bsd-canvas-source-row">
+                <label for="bsd-canvas-course-filter">Filter</label>
+                <input id="bsd-canvas-course-filter" type="text" placeholder="Type to filter courses">
+            </div>
+            <div class="bsd-canvas-source-row">
+                <label for="bsd-canvas-include-concluded">Archived</label>
+                <label class="bsd-checkbox-option" for="bsd-canvas-include-concluded">
+                    <input id="bsd-canvas-include-concluded" type="checkbox">
+                    Include archived courses
+                </label>
+            </div>
+            <div class="bsd-canvas-source-row">
+                <label for="bsd-canvas-course-select">Course</label>
+                <select id="bsd-canvas-course-select">
+                    <option value="">Choose Canvas course</option>
+                </select>
+            </div>
+            <details id="bsd-canvas-assignment-summary" class="bsd-canvas-assignment-summary" open>
+                <summary>No Canvas assignments loaded yet.</summary>
+                <div class="bsd-canvas-summary-table-wrap">
+                    <table id="bsd-canvas-summary-table">
+                        <thead>
+                            <tr>
+                                <th>Assignment</th>
+                                <th>Last Updated</th>
+                                <th>Submissions</th>
+                            </tr>
+                        </thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+            </details>
+            <div id="bsd-canvas-fetch-status"></div>
+        </div>
+
+        <div class="bsd-panel-settings">
+            <div class="bsd-field">
+                <label for="bsd-round-up-from">Round up at</label>
+                <input id="bsd-round-up-from" type="number" min="0.01" max="0.99" step="0.01">
+            </div>
+            <div class="bsd-field">
+                <label for="bsd-missing-pref">Missing/zero</label>
+                <select id="bsd-missing-pref">
+                    <option value="skip">Skip</option>
+                    <option value="comment">Comment (Mi)</option>
+                    <option value="score">Score (N/R)</option>
+                </select>
+            </div>
+            <button id="bsd-save-settings" class="bsd-save-settings" type="button">Save</button>
+        </div>
+
+        <div class="bsd-controls">
+            <button id="bsd-refresh-data" type="button">Refresh Data</button>
+            <button id="bsd-add-mapping" type="button">Add Assignment</button>
+            <button id="bsd-auto-match" type="button">Auto-Match</button>
+            <button id="bsd-clear-mappings" type="button">Clear</button>
+            <button id="bsd-paste-all" type="button">Paste All Mapped</button>
+        </div>
+
+        <div id="bsd-map-cards"></div>
+    </div>
+
+    <script src="scripts/jquery-3.6.3.min.js"></script>
+    <script src="scripts/sidepanel.js"></script>
+</body>
+</html>

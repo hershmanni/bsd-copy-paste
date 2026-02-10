@@ -4,13 +4,16 @@
   "manifest_version": 3, 
   "description": "Copy grades from Canvas to Synergy!",
   "action": {
-    "default_popup": "popup.html",
+    "default_popup": "popup_info.html",
     "default_icon": "images/arrow-128.png",
     "default_locale": "en",
     "description": "Copy rubric scores for an assignment from Canvas, paste into a column in Synergy."
   },
   "background": {
     "service_worker": "scripts/background.js"
+  },
+  "side_panel": {
+    "default_path": "sidepanel.html"
   },
   "icons": {
     "16": "images/arrow-16.png",
@@ -20,7 +23,8 @@
     "128": "images/arrow-128.png"
   },
   "options_page": "options.html",
-  "permissions": ["activeTab", "scripting", "storage", "tabs", "contextMenus"],
+  "permissions": ["activeTab", "scripting", "storage", "tabs", "contextMenus", "sidePanel"],
+  "host_permissions": ["https://*.instructure.com/*"],
    "content_scripts": [
   {
     "matches": ["https://synergy.beaverton.k12.or.us/*","https://syntrn.beaverton.k12.or.us/*"],

@@ -1,0 +1,540 @@
+#bsd-sidepanel {
+    box-sizing: border-box;
+    min-height: 100vh;
+    padding: 10px;
+    background: #1f242b;
+    color: #ffffff;
+    font-family: Arial, sans-serif;
+    font-size: 12px;
+}
+
+#bsd-sidepanel * {
+    box-sizing: border-box;
+}
+
+#bsd-sidepanel h2 {
+    margin: 0;
+    font-size: 15px;
+}
+
+#bsd-sidepanel .bsd-panel-head {
+    display: flex;
+    justify-content: flex-start;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 8px;
+}
+
+#bsd-mapper-status {
+    margin-bottom: 8px;
+    color: #b4f7fe;
+}
+
+#bsd-sidepanel .bsd-canvas-source {
+    border: 1px solid #3b444f;
+    border-radius: 6px;
+    padding: 8px;
+    margin-bottom: 10px;
+    background: #242b33;
+}
+
+#bsd-sidepanel .bsd-canvas-source-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin-bottom: 6px;
+}
+
+#bsd-sidepanel .bsd-canvas-source-head-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+#bsd-sidepanel .bsd-canvas-source-title {
+    font-size: 12px;
+    color: #b4f7fe;
+    font-weight: 600;
+}
+
+#bsd-sidepanel .bsd-canvas-source-row {
+    display: grid;
+    grid-template-columns: 72px 1fr;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 6px;
+}
+
+#bsd-sidepanel .bsd-canvas-source-row label {
+    font-size: 11px;
+    color: #8fb2d1;
+    white-space: nowrap;
+}
+
+#bsd-sidepanel .bsd-canvas-source-row select,
+#bsd-sidepanel .bsd-canvas-source-row input:not([type="checkbox"]) {
+    background: #2b3138;
+    color: #ffffff;
+    border: 1px solid #586473;
+    border-radius: 4px;
+    min-height: 28px;
+    padding: 4px 6px;
+    width: 100%;
+    min-width: 0;
+}
+
+#bsd-sidepanel .bsd-checkbox-option {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    color: #d5e4f6;
+    white-space: nowrap;
+}
+
+#bsd-sidepanel .bsd-checkbox-option input[type="checkbox"] {
+    margin: 0;
+    width: 14px;
+    height: 14px;
+    accent-color: #008cff;
+}
+
+#bsd-sidepanel .bsd-canvas-assignment-summary {
+    margin: 4px 0 0 0;
+    border: 1px solid #3b444f;
+    border-radius: 4px;
+    padding: 6px;
+    background: #212830;
+}
+
+#bsd-sidepanel .bsd-canvas-assignment-summary summary {
+    cursor: pointer;
+    color: #c4e4ff;
+    font-size: 11px;
+}
+
+#bsd-sidepanel .bsd-canvas-summary-table-wrap {
+    margin-top: 6px;
+    max-height: 180px;
+    overflow: auto;
+}
+
+#bsd-canvas-summary-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 11px;
+}
+
+#bsd-canvas-summary-table th,
+#bsd-canvas-summary-table td {
+    text-align: left;
+    padding: 4px 6px;
+    border-bottom: 1px solid #333c46;
+    vertical-align: top;
+}
+
+#bsd-canvas-summary-table th {
+    color: #8fb2d1;
+    white-space: nowrap;
+}
+
+#bsd-canvas-fetch-status {
+    margin-top: 6px;
+    color: #b4f7fe;
+    font-size: 11px;
+    min-height: 14px;
+}
+
+#bsd-sidepanel .bsd-panel-settings {
+    display: flex;
+    flex-wrap: nowrap;
+    gap: 8px;
+    align-items: center;
+    margin-bottom: 10px;
+}
+
+#bsd-sidepanel .bsd-field {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+    min-width: 0;
+}
+
+#bsd-sidepanel .bsd-field label {
+    font-size: 11px;
+    color: #8fb2d1;
+    white-space: nowrap;
+}
+
+#bsd-sidepanel .bsd-field select,
+#bsd-sidepanel .bsd-field input {
+    background: #2b3138;
+    color: #ffffff;
+    border: 1px solid #586473;
+    border-radius: 4px;
+    min-height: 28px;
+    padding: 4px 6px;
+}
+
+#bsd-sidepanel #bsd-round-up-from {
+    width: 72px;
+}
+
+#bsd-sidepanel #bsd-missing-pref {
+    width: 150px;
+}
+
+#bsd-sidepanel .bsd-save-settings {
+    white-space: nowrap;
+}
+
+#bsd-sidepanel .bsd-controls {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+    margin-bottom: 10px;
+}
+
+#bsd-sidepanel button {
+    background: #008cff;
+    color: #ffffff;
+    border: none;
+    border-radius: 4px;
+    padding: 6px 10px;
+    cursor: pointer;
+    font-size: 12px;
+}
+
+#bsd-sidepanel button:hover {
+    background: #2d9fff;
+}
+
+#bsd-sidepanel button:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+    pointer-events: none;
+}
+
+#bsd-sidepanel #bsd-stop-canvas-fetch {
+    background: #6b2530;
+}
+
+#bsd-sidepanel #bsd-stop-canvas-fetch:hover {
+    background: #7f2d3a;
+}
+
+#bsd-map-cards {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.bsd-map-card {
+    border-left: 2px solid #ffffff;
+    border-bottom: 4px solid #ffd000;
+    border-radius: 6px;
+    padding: 8px;
+    background: #262d35;
+}
+
+.bsd-card-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 6px;
+}
+
+.bsd-card-title {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+    font-size: 13px;
+    font-weight: 600;
+}
+
+.bsd-card-title-prefix {
+    color: #8fb2d1;
+    font-size: 11px;
+    font-weight: 400;
+    white-space: nowrap;
+}
+
+.bsd-card-title select {
+    background: #2b3138;
+    color: #ffffff;
+    border: 1px solid #586473;
+    border-radius: 4px;
+    min-height: 26px;
+    padding: 3px 6px;
+    width: auto;
+    max-width: 280px;
+}
+
+.bsd-card-meta-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+    margin-bottom: 6px;
+}
+
+.bsd-meta-field {
+    display: grid;
+    grid-template-columns: auto minmax(140px, auto);
+    align-items: center;
+    column-gap: 6px;
+    row-gap: 3px;
+}
+
+.bsd-updated-field {
+    grid-template-columns: auto auto;
+}
+
+.bsd-inline-label {
+    color: #8fb2d1;
+    font-size: 11px;
+    white-space: nowrap;
+}
+
+.bsd-card-meta-row select,
+.bsd-row-field select {
+    background: #2b3138;
+    color: #ffffff;
+    border: 1px solid #586473;
+    border-radius: 4px;
+    min-height: 26px;
+    padding: 3px 6px;
+    width: auto;
+    max-width: 260px;
+}
+
+.bsd-standards-wrap {
+    margin-top: 6px;
+    padding-left: 10px;
+    border-left: 2px solid #3b444f;
+}
+
+.bsd-standards-title {
+    color: #8fb2d1;
+    font-size: 11px;
+    margin-bottom: 4px;
+}
+
+.bsd-canvas-updated {
+    min-height: 26px;
+    border: 1px solid #586473;
+    border-radius: 4px;
+    padding: 4px 8px;
+    background: #2b3138;
+    color: #c6d6e6;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    display: inline-flex;
+    align-items: center;
+    max-width: 240px;
+}
+
+.bsd-card-actions {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+}
+
+.bsd-card-rows {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+}
+
+.bsd-map-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    align-items: center;
+    border-top: 1px solid #333c46;
+    padding-top: 6px;
+}
+
+.bsd-row-field {
+    display: grid;
+    grid-template-columns: auto minmax(160px, auto);
+    align-items: center;
+    column-gap: 6px;
+    row-gap: 3px;
+    min-width: 0;
+}
+
+.bsd-row-buttons {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+    margin-left: auto;
+}
+
+.bsd-row-status {
+    color: #b4f7fe;
+    font-size: 11px;
+    flex: 1 1 120px;
+    min-width: 120px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.bsd-inline-error {
+    color: #f9b1b1;
+    font-size: 11px;
+}
+
+.bsd-meta-field .bsd-inline-error,
+.bsd-row-field .bsd-inline-error {
+    grid-column: 2;
+}
+
+.bsd-input-error {
+    border-color: #f08f8f !important;
+}
+
+.bsd-card-remove {
+    background: #6b2530;
+}
+
+.bsd-card-remove:hover {
+    background: #7f2d3a;
+}
+
+@media (max-width: 780px) {
+    #bsd-sidepanel .bsd-canvas-source-row {
+        grid-template-columns: 64px 1fr;
+    }
+
+    .bsd-card-head {
+        flex-wrap: wrap;
+        align-items: center;
+    }
+
+    .bsd-card-title {
+        flex: 1 1 280px;
+        display: grid;
+        grid-template-columns: auto minmax(180px, 1fr);
+        column-gap: 6px;
+    }
+
+    .bsd-card-title select {
+        width: 100%;
+        max-width: 100%;
+    }
+
+    .bsd-card-actions {
+        justify-content: flex-end;
+        margin-left: auto;
+    }
+
+    .bsd-card-meta-row {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        gap: 6px;
+        align-items: center;
+    }
+
+    .bsd-meta-field {
+        min-width: 0;
+        grid-template-columns: auto minmax(0, 1fr);
+    }
+
+    .bsd-canvas-assign-field select {
+        width: 100%;
+        max-width: 100%;
+    }
+
+    .bsd-canvas-updated {
+        max-width: 220px;
+    }
+
+    .bsd-map-row {
+        flex-direction: row;
+        align-items: center;
+        gap: 6px 8px;
+    }
+
+    .bsd-row-field {
+        flex: 1 1 240px;
+        width: auto;
+        grid-template-columns: auto minmax(0, 1fr);
+    }
+
+    .bsd-row-field select {
+        width: 100%;
+        max-width: 100%;
+        min-width: 0;
+    }
+
+    .bsd-row-buttons {
+        margin-left: 0;
+        flex: 0 0 auto;
+    }
+
+    .bsd-row-status {
+        flex: 1 1 100%;
+        min-width: 0;
+        margin-top: 2px;
+    }
+}
+
+@media (max-width: 620px) {
+    #bsd-sidepanel .bsd-canvas-source-row {
+        grid-template-columns: 1fr;
+        align-items: flex-start;
+    }
+
+    #bsd-sidepanel .bsd-canvas-source-head {
+        flex-wrap: wrap;
+        align-items: flex-start;
+    }
+
+    #bsd-sidepanel .bsd-canvas-source-head-actions {
+        width: 100%;
+    }
+
+    #bsd-sidepanel .bsd-panel-settings {
+        flex-wrap: wrap;
+        align-items: flex-start;
+    }
+
+    #bsd-sidepanel .bsd-field {
+        width: 100%;
+        justify-content: space-between;
+    }
+
+    .bsd-card-head {
+        align-items: flex-start;
+    }
+
+    .bsd-card-actions {
+        justify-content: flex-start;
+        margin-left: 0;
+        width: 100%;
+    }
+
+    .bsd-card-meta-row {
+        grid-template-columns: 1fr;
+    }
+
+    .bsd-canvas-updated {
+        max-width: 100%;
+        width: 100%;
+    }
+
+    .bsd-row-field {
+        flex: 1 1 100%;
+    }
+
+    .bsd-row-buttons {
+        width: 100%;
+    }
+}

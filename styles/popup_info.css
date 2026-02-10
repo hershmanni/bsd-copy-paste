@@ -1,0 +1,31 @@
+body {
+    margin: 0;
+    width: 320px;
+    min-height: 120px;
+    background: #1f242b;
+    color: #e8f1ff;
+    font-family: Arial, sans-serif;
+}
+
+.info-wrap {
+    padding: 12px 14px;
+}
+
+h3 {
+    margin: 0 0 8px 0;
+    font-size: 16px;
+    color: #b4f7fe;
+}
+
+p {
+    margin: 6px 0;
+    font-size: 13px;
+    line-height: 1.35;
+}
+
+code {
+    color: #c8d8ea;
+    background: #2d333b;
+    padding: 1px 4px;
+    border-radius: 3px;
+}

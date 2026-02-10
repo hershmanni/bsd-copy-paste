@@ -1,6 +1,196 @@
 // TODO
 // update contextMenu persistence...
 
+const ACTION_POPUP_INFO = 'popup_info.html'
+const SIDEPANEL_PATH = 'sidepanel.html'
+
+function isSynergyUrl(url) {
+    return Boolean(
+        url &&
+        (
+            String(url).match(/^https\:\/\/synergy\.beaverton\.k12\.or\.us\//) ||
+            String(url).match(/^https\:\/\/syntrn\.beaverton\.k12\.or\.us\//)
+        )
+    )
+}
+
+function isMessagingConnectionError(err) {
+    let message = String(err && err.message ? err.message : err || '')
+    return (
+        message.includes('Could not establish connection') ||
+        message.includes('Receiving end does not exist')
+    )
+}
+
+function sendMessageToTab(tabId, message) {
+    return new Promise((resolve, reject) => {
+        chrome.tabs.sendMessage(tabId, message, (response) => {
+            if (chrome.runtime.lastError) {
+                reject(new Error(chrome.runtime.lastError.message))
+                return
+            }
+            resolve(response)
+        })
+    })
+}
+
+async function ensureSynergyContentScript(tabId) {
+    await chrome.scripting.executeScript({
+        target: { tabId: tabId },
+        files: ['scripts/jquery-3.6.3.min.js', 'scripts/synergy.js']
+    })
+}
+
+async function checkSynergyGradebookTab(tab) {
+    if (!tab || !tab.id || !isSynergyUrl(tab.url)) {
+        return { eligible: false, reason: 'Not a Synergy tab.' }
+    }
+
+    let message = {
+        from: 'background.js',
+        to: 'synergy.js',
+        title: 'check_gradebook_page'
+    }
+
+    try {
+        let response = await sendMessageToTab(tab.id, message)
+        if (response && response.ok === true) {
+            return {
+                eligible: Boolean(response.eligible),
+                reason: response.reason || ''
+            }
+        }
+    } catch (e) {
+        if (!isMessagingConnectionError(e)) {
+            return { eligible: false, reason: String(e && e.message ? e.message : e) }
+        }
+
+        try {
+            await ensureSynergyContentScript(tab.id)
+            let retry = await sendMessageToTab(tab.id, message)
+            if (retry && retry.ok === true) {
+                return {
+                    eligible: Boolean(retry.eligible),
+                    reason: retry.reason || ''
+                }
+            }
+        } catch (retryErr) {
+            return { eligible: false, reason: String(retryErr && retryErr.message ? retryErr.message : retryErr) }
+        }
+    }
+
+    return { eligible: false, reason: 'Could not verify Synergy Grade Book page.' }
+}
+
+async function setActionPopupSafe(tabId, popupPath) {
+    try {
+        await chrome.action.setPopup({
+            tabId: tabId,
+            popup: popupPath
+        })
+    } catch (e) {
+        console.log('setPopup failed', e)
+    }
+}
+
+async function setSidePanelOptionsSafe(tabId, enabled) {
+    if (!chrome.sidePanel || !chrome.sidePanel.setOptions) {
+        return
+    }
+    try {
+        await chrome.sidePanel.setOptions({
+            tabId: tabId,
+            path: SIDEPANEL_PATH,
+            enabled: Boolean(enabled)
+        })
+    } catch (e) {
+        console.log('sidePanel.setOptions failed', e)
+    }
+}
+
+async function configureActionForTab(tab) {
+    if (!tab || !tab.id) {
+        return
+    }
+
+    let popupPath = ACTION_POPUP_INFO
+    let sidePanelEnabled = false
+
+    if (isSynergyUrl(tab.url)) {
+        let check = await checkSynergyGradebookTab(tab)
+        if (check.eligible) {
+            popupPath = ''
+            sidePanelEnabled = true
+        } else {
+            popupPath = ACTION_POPUP_INFO
+            sidePanelEnabled = false
+        }
+    }
+
+    await setActionPopupSafe(tab.id, popupPath)
+    await setSidePanelOptionsSafe(tab.id, sidePanelEnabled)
+}
+
+async function configureActionForTabId(tabId) {
+    try {
+        let tab = await chrome.tabs.get(tabId)
+        await configureActionForTab(tab)
+    } catch (e) {
+        // tab might have closed
+    }
+}
+
+async function configureActionForActiveTabs() {
+    try {
+        let tabs = await chrome.tabs.query({ active: true })
+        for (let i = 0; i < tabs.length; i++) {
+            await configureActionForTab(tabs[i])
+        }
+    } catch (e) {
+        console.log('configureActionForActiveTabs failed', e)
+    }
+}
+
+async function handleActionClick(tab) {
+    if (!tab || !tab.id) {
+        return
+    }
+
+    if (!isSynergyUrl(tab.url)) {
+        await setActionPopupSafe(tab.id, ACTION_POPUP_INFO)
+        return
+    }
+
+    if (chrome.sidePanel && chrome.sidePanel.open) {
+        try {
+            // Must be called directly in the user gesture path.
+            await chrome.sidePanel.open({ tabId: tab.id })
+        } catch (e) {
+            console.log('sidePanel.open failed', e)
+        }
+    }
+
+    // Re-validate tab eligibility after opening attempt so action/panel state stays in sync.
+    configureActionForTab(tab).catch((e) => {
+        console.log('configureActionForTab after action click failed', e)
+    })
+}
+
+function onTabActivated(activeInfo) {
+    configureActionForTabId(activeInfo.tabId)
+}
+
+function onTabUpdated(tabId, changeInfo, tab) {
+    if (!changeInfo || (!Object.prototype.hasOwnProperty.call(changeInfo, 'url') && changeInfo.status !== 'complete')) {
+        return
+    }
+    configureActionForTab(tab)
+}
+
+function onRuntimeLifecycle() {
+    configureActionForActiveTabs()
+}
+
 
 
 // function get_rubric_id_from_scores(scores) {
@@ -624,6 +814,28 @@ if (!chrome.runtime.onMessage.hasListener(mainListener)) {
 } else {
     console.log('Already have mainListener, not adding additional')
 }
+
+if (!chrome.action.onClicked.hasListener(handleActionClick)) {
+    chrome.action.onClicked.addListener(handleActionClick)
+}
+
+if (!chrome.tabs.onActivated.hasListener(onTabActivated)) {
+    chrome.tabs.onActivated.addListener(onTabActivated)
+}
+
+if (!chrome.tabs.onUpdated.hasListener(onTabUpdated)) {
+    chrome.tabs.onUpdated.addListener(onTabUpdated)
+}
+
+if (!chrome.runtime.onInstalled.hasListener(onRuntimeLifecycle)) {
+    chrome.runtime.onInstalled.addListener(onRuntimeLifecycle)
+}
+
+if (!chrome.runtime.onStartup.hasListener(onRuntimeLifecycle)) {
+    chrome.runtime.onStartup.addListener(onRuntimeLifecycle)
+}
+
+configureActionForActiveTabs()
 
 addContextListener()
 

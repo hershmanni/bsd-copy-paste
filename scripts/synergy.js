@@ -90,6 +90,71 @@ function getFrameDocument() {
     return null
 }
 
+function getAccessibleDocuments() {
+    let docs = [document]
+
+    try {
+        if (window.frames && window.frames.length > 0) {
+            for (let i = 0; i < window.frames.length; i++) {
+                try {
+                    if (window.frames[i] && window.frames[i].document) {
+                        docs.push(window.frames[i].document)
+                    }
+                } catch (frameErr) {
+                    // pass inaccessible frame
+                }
+            }
+        }
+    } catch (e) {
+        // pass
+    }
+
+    return docs
+}
+
+function checkSynergyGradebookPage() {
+    let href = String(window.location.href || '')
+    if (!href.match(/\/POV_TXP_MAIN\.aspx/i)) {
+        return {
+            eligible: false,
+            reason: 'Not on POV_TXP_MAIN.aspx.'
+        }
+    }
+
+    let docs = getAccessibleDocuments()
+    let pageTitle = ''
+    for (let i = 0; i < docs.length; i++) {
+        try {
+            let titleText = normalizeHeaderText($(docs[i]).find('div.PageTitle').first().text())
+            if (titleText) {
+                pageTitle = titleText
+                break
+            }
+        } catch (e) {
+            // pass inaccessible document
+        }
+    }
+
+    if (!pageTitle) {
+        return {
+            eligible: false,
+            reason: 'Page title element not found.'
+        }
+    }
+
+    if (normalizeHeaderText(pageTitle).toLowerCase() !== 'grade book') {
+        return {
+            eligible: false,
+            reason: `Current page is "${pageTitle}", not Grade Book.`
+        }
+    }
+
+    return {
+        eligible: true,
+        reason: 'OK'
+    }
+}
+
 function getMapperDocument() {
     return getFrameDocument()
 }
@@ -2351,6 +2416,20 @@ function initializeMapperPanel() {
 function myListener(request, sender, sendResponse) {
     console.log(`Message received by synergy.js: from: ${request.from} title: ${request.title}`)
 
+    if (
+        request.to == 'synergy.js' &&
+        request.title == 'check_gradebook_page' &&
+        (request.from == 'popup.js' || request.from == 'sidepanel.js' || request.from == 'background.js')
+    ) {
+        let check = checkSynergyGradebookPage()
+        sendResponse({
+            ok: true,
+            eligible: check.eligible,
+            reason: check.reason
+        })
+        return false
+    }
+
     if (request.from == 'background.js' && request.to == 'synergy.js' && request.title == 'synergy_paste') {
         let scores = request.attachment || []
         ;(async () => {
@@ -2374,6 +2453,11 @@ function myListener(request, sender, sendResponse) {
     }
 
     if (request.from == 'popup.js' && request.to == 'synergy.js' && request.title == 'show_mapper_panel') {
+        let check = checkSynergyGradebookPage()
+        if (!check.eligible) {
+            sendResponse(`Mapper unavailable: ${check.reason}`)
+            return false
+        }
         ;(async () => {
             try {
                 let mapperDoc = await waitForMapperDocument(20, 100)
@@ -2390,6 +2474,81 @@ function myListener(request, sender, sendResponse) {
         })()
         sendResponse('Opening mapper panel...')
         return false
+    }
+
+    if (request.from == 'sidepanel.js' && request.to == 'synergy.js' && request.title == 'get_mapper_context') {
+        ;(async () => {
+            try {
+                let check = checkSynergyGradebookPage()
+                if (!check.eligible) {
+                    sendResponse({
+                        ok: false,
+                        error: `Mapper unavailable: ${check.reason}`
+                    })
+                    return
+                }
+
+                let mapperDoc = await waitForMapperDocument(20, 100)
+                if (!mapperDoc) {
+                    sendResponse({
+                        ok: false,
+                        error: 'Synergy gradebook table not ready yet.'
+                    })
+                    return
+                }
+
+                let headerInfo = buildHeaderMetaById(mapperDoc)
+                let columns = getVisibleSynergyColumns()
+                sendResponse({
+                    ok: true,
+                    columns: columns,
+                    viewMode: headerInfo.viewMode || 'view_by_assignment'
+                })
+            } catch (e) {
+                sendResponse({
+                    ok: false,
+                    error: e && e.message ? e.message : String(e)
+                })
+            }
+        })()
+        return true
+    }
+
+    if (request.from == 'sidepanel.js' && request.to == 'synergy.js' && request.title == 'paste_mapping') {
+        ;(async () => {
+            try {
+                let check = checkSynergyGradebookPage()
+                if (!check.eligible) {
+                    sendResponse({
+                        ok: false,
+                        error: `Mapper unavailable: ${check.reason}`
+                    })
+                    return
+                }
+
+                let mapping = request.mapping || {}
+                await loadMapperStateFromStorage()
+
+                if (Object.prototype.hasOwnProperty.call(request, 'roundUpFrom')) {
+                    mapperState.roundUpFrom = normalizeRoundUpFromValue(request.roundUpFrom, mapperState.roundUpFrom)
+                }
+                if (Object.prototype.hasOwnProperty.call(request, 'missingPref')) {
+                    mapperState.missingPref = normalizeMissingPrefValue(request.missingPref, mapperState.missingPref)
+                }
+
+                let result = await runMappingPaste(mapping)
+                sendResponse({
+                    ok: true,
+                    result: result
+                })
+            } catch (e) {
+                sendResponse({
+                    ok: false,
+                    error: e && e.message ? e.message : String(e)
+                })
+            }
+        })()
+        return true
     }
 
     return false
@@ -2411,6 +2570,9 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
         has_mapper_changes = Boolean(changes.roundUpFrom || changes.missingPref)
     }
     if (has_mapper_changes) {
+        if (mapperQuery('#bsd-mapper-panel').length === 0) {
+            return
+        }
         if (suppressNextMapperRefresh) {
             suppressNextMapperRefresh = false
             return
@@ -2418,5 +2580,3 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
         refreshMapperPanel()
     }
 })
-
-initializeMapperPanel()

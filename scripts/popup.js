@@ -36,6 +36,66 @@ function isSynergyUrl(url) {
     )
 }
 
+function isMessagingConnectionError(err) {
+    let message = String(err && err.message ? err.message : err || '')
+    return (
+        message.includes('Could not establish connection') ||
+        message.includes('Receiving end does not exist')
+    )
+}
+
+async function send_message_to_synergy_tab_with_inject(tab_id, message) {
+    try {
+        return await send_message_to_synergy_tab(tab_id, message)
+    } catch (e) {
+        if (!isMessagingConnectionError(e)) {
+            throw e
+        }
+
+        await chrome.scripting.executeScript({
+            target: { tabId: tab_id },
+            files: ['scripts/jquery-3.6.3.min.js', 'scripts/synergy.js']
+        })
+
+        return await send_message_to_synergy_tab(tab_id, message)
+    }
+}
+
+async function check_synergy_gradebook_page(tab) {
+    if (!tab || !tab.id) {
+        return {
+            ok: false,
+            eligible: false,
+            reason: 'No active tab found.'
+        }
+    }
+
+    let message = {
+        from: 'popup.js',
+        to: 'synergy.js',
+        title: 'check_gradebook_page'
+    }
+
+    try {
+        let response = await send_message_to_synergy_tab_with_inject(tab.id, message)
+        if (response && response.ok === true) {
+            return response
+        }
+
+        return {
+            ok: false,
+            eligible: false,
+            reason: 'Could not verify Synergy Grade Book page.'
+        }
+    } catch (e) {
+        return {
+            ok: false,
+            eligible: false,
+            reason: String(e && e.message ? e.message : e || 'Could not verify Synergy Grade Book page.')
+        }
+    }
+}
+
 async function send_mapper_panel_command() {
     let queryOptions = {currentWindow: true, active: true}
     let tabs = await chrome.tabs.query(queryOptions)
@@ -94,6 +154,60 @@ async function send_mapper_panel_command() {
     }
 }
 
+async function open_mapper_sidepanel() {
+    let queryOptions = { currentWindow: true, active: true }
+    let tabs = await chrome.tabs.query(queryOptions)
+    if (!tabs || tabs.length === 0) {
+        $('#synergy_status').css('color', '#f9b1b1').text('No active tab found.')
+        return
+    }
+
+    let tab = tabs[0]
+    if (!isSynergyUrl(tab.url)) {
+        $('#synergy_status').css('color', '#f9b1b1').text('Open a Synergy tab first.')
+        return
+    }
+
+    if (!chrome.sidePanel || !chrome.sidePanel.open || !chrome.sidePanel.setOptions) {
+        $('#synergy_status').css('color', '#f9b1b1').text('Side Panel API unavailable. Opening legacy mapper...')
+        await send_mapper_panel_command()
+        return
+    }
+
+    let gradebookCheck = await check_synergy_gradebook_page(tab)
+    if (!gradebookCheck.eligible) {
+        try {
+            await chrome.sidePanel.setOptions({
+                tabId: tab.id,
+                path: 'sidepanel.html',
+                enabled: false
+            })
+        } catch (disableErr) {
+            console.log('Failed to disable side panel for non-gradebook page:', disableErr)
+        }
+
+        let reason = gradebookCheck.reason || 'Open POV_TXP_MAIN.aspx with PageTitle "Grade Book".'
+        $('#synergy_status')
+            .css('color', '#f9b1b1')
+            .text(`Mapper unavailable here. ${reason}`)
+        return
+    }
+
+    try {
+        await chrome.sidePanel.setOptions({
+            tabId: tab.id,
+            path: 'sidepanel.html',
+            enabled: true
+        })
+        await chrome.sidePanel.open({ tabId: tab.id })
+        $('#synergy_status').css('color', '#b4f7fe').text('Mapper Side Panel opened.')
+    } catch (e) {
+        let err = String(e && e.message ? e.message : e)
+        $('#synergy_status').css('color', '#f9b1b1').text('Could not open Side Panel. Click "Open Mapper Side Panel".')
+        console.log('open_mapper_sidepanel failed:', err)
+    }
+}
+
 function send_message_to_synergy_tab(tab_id, message) {
     return new Promise((resolve, reject) => {
         chrome.tabs.sendMessage(tab_id, message, (response) => {
@@ -109,26 +223,26 @@ function send_message_to_synergy_tab(tab_id, message) {
 function render_synergy_mode() {
     $('div#alert')
         .css({'background':'#f6ae2d','color':'#4c4b4b'})
-        .html('<p><b>Synergy mode detected.</b></p><p>Open or restore the Canvas to Synergy Mapper panel.</p>')
+        .html('<p><b>Synergy mode detected.</b></p><p>Open Synergy Grade Book, then open or restore the Canvas to Synergy Mapper Side Panel.</p>')
 
     $('div#content').hide()
     $('div#synergy_actions')
         .show()
         .html(`
-            <button id="open_mapper_panel" type="button">Open Mapper Panel</button>
-            <button id="refresh_mapper_panel" type="button">Refresh Mapper Panel</button>
+            <button id="open_mapper_panel" type="button">Open Mapper Side Panel</button>
+            <button id="refresh_mapper_panel" type="button">Refresh Side Panel</button>
             <div id="synergy_status"></div>
         `)
 
     $('#open_mapper_panel').off('click').on('click', () => {
-        send_mapper_panel_command()
+        open_mapper_sidepanel()
     })
 
     $('#refresh_mapper_panel').off('click').on('click', () => {
-        send_mapper_panel_command()
+        open_mapper_sidepanel()
     })
 
-    send_mapper_panel_command()
+    open_mapper_sidepanel()
 }
 
 function showLoader(show) {
