@@ -1143,8 +1143,10 @@ async function fetchAllCanvasDataForCourse(courseId, options = {}) {
         await refreshMapperPanel(false)
         autoMatchAllMappings(true, true, true)
 
-        let unmatchedSuffix = unmatchedCount > 0 ? ` ${unmatchedCount} submission(s) lacked Synergy ID matches.` : ''
-        let doneMessage = `Fetched ${assignments.length} assignment(s) for selected course.${unmatchedSuffix}`
+        if (unmatchedCount > 0) {
+            console.log(`Ignored ${unmatchedCount} Canvas submissions that did not map to fetched course students.`)
+        }
+        let doneMessage = `Fetched ${assignments.length} assignment(s) for selected course.`
         if (manageLoading) {
             endCanvasFetch(doneMessage)
         } else {
@@ -2231,10 +2233,6 @@ function addMapperCard(cardData = {}) {
     createMapperCard(safeCardData)
 }
 
-function addMapperRow(rowData = {}) {
-    addMapperCard(rowData)
-}
-
 function buildCardSeedsFromMappings(mappings) {
     if (!Array.isArray(mappings) || mappings.length === 0) {
         return []
@@ -2436,7 +2434,12 @@ async function pasteSingleRow(row) {
 
         status.css('color', '#b4f7fe').text('Pasting...')
         let result = await requestSynergyPaste(tab.id, mapping)
-        status.css('color', '#b4f7fe').text(`Done: ${result.pushed}/${result.matched} pushed`)
+        let statusText = `Done: ${result.pushed}/${result.matched} pushed`
+        let skippedTarget = Number(result && result.skipped_target ? result.skipped_target : 0)
+        if (skippedTarget > 0) {
+            statusText += `, ${skippedTarget} skipped in section`
+        }
+        status.css('color', '#b4f7fe').text(statusText)
     } catch (e) {
         status.css('color', '#f9b1b1').text(`Error: ${e.message}`)
     }

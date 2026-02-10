@@ -8,6 +8,26 @@ async function getBaseUrl() {
     return base
 }
 
+async function ensureBaseUrl(forceRefresh = false) {
+    if (!forceRefresh && base_url) {
+        return base_url
+    }
+    if (!forceRefresh && base_url_ready) {
+        return base_url_ready
+    }
+
+    base_url_ready = getBaseUrl()
+        .then((resolvedBaseUrl) => {
+            base_url = resolvedBaseUrl
+            return resolvedBaseUrl
+        })
+        .catch((e) => {
+            base_url_ready = null
+            throw e
+        })
+    return base_url_ready
+}
+
 async function getUrl() {
     let queryOptions = {currentWindow: true, active: true}
     let tabs = await chrome.tabs.query(queryOptions)
@@ -293,17 +313,9 @@ function update_assign_select(assignments, assign_id_selected = 0) {
     });
 }
 
-/* replace synergy_ids in scores with dummy Id's for testing. */
-const use_fake_synergy_ids = (scores) => {
-    for (i = 0; i < Math.min(synFakeIds.length, scores.length); i++) {
-        scores[i].sis_number = synFakeIds[i]
-    }
-    return(scores)
-}
-
 function getAssignmentById(assignments, assign_id) {
-    if (assignments == []) {
-        return(null)
+    if (!Array.isArray(assignments) || assignments.length === 0) {
+        return null
     }
     let my_assign = null
 
@@ -316,7 +328,7 @@ function getAssignmentById(assignments, assign_id) {
     if (my_assign == null) {
         console.log(`Assignment ${assign_id} not found in ${assignments.length}`)
     }
-    return(my_assign)
+    return my_assign
 }
 
 async function send_to_background(data, my_type = 'assignments') {
@@ -399,10 +411,11 @@ async function getAssignments(course_id) {
     let page_n = 50;
     let page = 1;
     let data_length = page_n;
-    assignments = [];
+    let assignments = [];
+    let resolvedBaseUrl = await ensureBaseUrl()
     showLoader(true)
     while (data_length == page_n) {
-        let url = `${base_url}/api/v1/courses/${course_id}/assignments?order_by=due_at&page=${page}&per_page=${page_n}`
+        let url = `${resolvedBaseUrl}/api/v1/courses/${course_id}/assignments?order_by=due_at&page=${page}&per_page=${page_n}`
         console.log(`fetch assignments with: ${url}`)
         let res = await fetch(url);
         let data = await JSON.parse(await res.text());
@@ -424,7 +437,7 @@ async function getAssignments(course_id) {
                 }
                 
                 // only include assignments that have defined rubrics.
-                if ((assignment.use_rubric_for_grading | assignment.rubric != undefined) & e.published) {
+                if ((assignment.use_rubric_for_grading || assignment.rubric != undefined) && e.published) {
                     assignments.push(assignment)
                 } else {
                     console.log(`Skipping ${assignment.name} because it does not use a rubric.`)
@@ -447,24 +460,6 @@ async function getAssignments(course_id) {
     return(assignments)  
 }
 
-function getAssignmentById(assignments, assign_id) {
-    if (Object.keys(assignments).length == 0) {
-        console.log('No assignments')
-        return null
-    }
-    let my_assign = null
-    assignments.forEach((a) => {
-        if (a.id == assign_id) {
-            my_assign = a
-        }  
-    })
-    if (my_assign == null) {
-        console.log(`Assignment ${assign_id} not found in ${assignments.length}`)
-    }
-    
-    return my_assign
-}
-
 const getRubrics = (assignment) => {
     let rubrics = []
     assignment.rubric.forEach((r) => {
@@ -481,7 +476,7 @@ const getRubrics = (assignment) => {
 }
 
 const getRubric = (assignment, rubric_id) => {
-    rubric = {}
+    let rubric = {}
     getRubrics(assignment).forEach((r) =>{
         if (r.id == rubric_id) {
             rubric = r
@@ -490,21 +485,11 @@ const getRubric = (assignment, rubric_id) => {
     return(rubric)
 }
 
-const getSynergyId = (students, canvas_id) => {
-    students.forEach((e) => {
-        if (e.canvas_id == canvas_id) {
-            return e.synergy_id
-        }
-    })
-
-    console.log(`No Synergy Match for Canvas ID ${canvas_id}`)
-}
-
 const add_synergy_id = (submissions, students) => {
     console.log(`Adding student_info to submissions`, submissions)
     console.log('students',students)
-    matched_submissions = []
-    matched_submission_ids = []
+    let matched_submissions = []
+    let matched_submission_ids = []
     submissions.forEach((s) => {
         // console.log('Adding syn_id for submission',s)
         let match = false
@@ -543,6 +528,7 @@ async function getSubmissions(course_id, assignments, assign_id, opts = {}) {
 
     console.log(`Fetching scores w/ course (${course_id}), assign (${assign_id})`)
     let students = await getStudents(course_id)
+    let resolvedBaseUrl = await ensureBaseUrl()
     let page_n = 50
     let page = 1
     let data_length = page_n
@@ -556,7 +542,7 @@ async function getSubmissions(course_id, assignments, assign_id, opts = {}) {
         submissions = await getOutcomes(course_id)
     } else {
         while (data_length == page_n) {
-            let url = `${base_url}/api/v1/courses/${course_id}/assignments/${assign_id}/submissions?include[]=rubric_assessment&page=${page}&per_page=${page_n}`
+            let url = `${resolvedBaseUrl}/api/v1/courses/${course_id}/assignments/${assign_id}/submissions?include[]=rubric_assessment&page=${page}&per_page=${page_n}`
             console.log(`Fetching ${url}`)
             let res = await fetch(url)
             let text = await res.text()
@@ -780,7 +766,7 @@ function countScoresFromSubmissionsByRubricId(submissions, rubric_id) {
 
     // sort all lists.
 
-    my_list_vars = [rubric_scores, entered_scores, no_scores, missing, late, excused, skipped_entirely]
+    let my_list_vars = [rubric_scores, entered_scores, no_scores, missing, late, excused, skipped_entirely]
 
     my_list_vars.forEach((my_list) => {
         my_list.sort(function(a, b) {
@@ -806,8 +792,9 @@ async function getStudents(course_id) {
         return students_cache[course_id]
     }
 
-    // let res = await fetch(`${base_url}/courses/${course_id}/students`)
-    let res = await fetch(`${base_url}/api/v1/courses/${course_id}/sections?include[]=students`)
+    let resolvedBaseUrl = await ensureBaseUrl()
+    // let res = await fetch(`${resolvedBaseUrl}/courses/${course_id}/students`)
+    let res = await fetch(`${resolvedBaseUrl}/api/v1/courses/${course_id}/sections?include[]=students`)
 
     let data = await JSON.parse(await res.text())
     let students = []
@@ -851,7 +838,8 @@ async function getStudents(course_id) {
 
 // adding support for Overall Outcomes
 async function getOutcomes(course_id) {
-    let url = `${base_url}/api/v1/courses/${course_id}/outcome_rollups`
+    let resolvedBaseUrl = await ensureBaseUrl()
+    let url = `${resolvedBaseUrl}/api/v1/courses/${course_id}/outcome_rollups`
     var outcomes = []
     var results = 1
     console.log(`Fetching ${url}`)
@@ -904,7 +892,8 @@ async function getOutcomes(course_id) {
 }
 
 async function getOutcomeRubrics(course_id) {
-    url =`${base_url}/api/v1/courses/${course_id}/rubrics?per_page=100&page=1`
+    let resolvedBaseUrl = await ensureBaseUrl()
+    let url =`${resolvedBaseUrl}/api/v1/courses/${course_id}/rubrics?per_page=100&page=1`
     var obj = await fetch(url)
     var rubric_obj = {}
     var data = JSON.parse(await obj.text())
@@ -1010,7 +999,7 @@ function makeSubmissionsTable(submissions, rubrics) {
     console.table(submissions)
     console.table(rubrics)
     console.log(`base_url: ${base_url}`)
-    my_table = `<table id="submissions">\n`
+    let my_table = `<table id="submissions">\n`
     my_table += '<thead><tr><td class="rotate"><div>Period</div></td><td class="rotate"><div>synergy_id</div></td><td class="rotate"><div>Name</div></td>'
     rubrics.forEach((r) => {
         my_table += `<td class="rotate"><div>${r.alt_code.slice(0,30)}</div></td>`
@@ -1277,6 +1266,12 @@ async function fetch_assign_click() {
     /* Fetch assignments */
     // window.location.href.match(/courses\/(\d+)\//)[1]  // (returns course_id)
     course_id = tabs[0].url.match(/courses\/(\d+)\//)[1]
+    try {
+        await ensureBaseUrl(true)
+    } catch (e) {
+        console.log('Could not resolve Canvas base URL before fetching assignments', e)
+        return null
+    }
     console.log(`Fetching assignments for course ${course_id}`)
     assignments = await getAssignments(course_id)
     console.log(`assignments: ${assignments.length}... first assignment: ${assignments[0]}`)
@@ -1316,13 +1311,12 @@ async function clear_button_click() {
 
 /* global scope vars */
 let base_url = ''
-// const synFakeIds = []
-var course_id = 0
-var assignments = []
-var rubrics = []
-var assign_id = 0
-var submissions_by_assignment_cache = {}
-var students_cache = {}
+let base_url_ready = null
+let url = ''
+let course_id = 0
+let assignments = []
+let submissions_by_assignment_cache = {}
+let students_cache = {}
 
 
 $('button#fetch_assign').click(function(){
@@ -1341,7 +1335,7 @@ function updateRounding(rounded = 0.5) {
 async function getMissingPref() {
     let p = new Promise((resolve, reject) => {
         chrome.storage.sync.get(
-            keys = {
+            {
                 missingPref: "skip"
             },
             (items) => {
@@ -1375,37 +1369,44 @@ async function updateMissing() {
     When popup is opened, check to see if canvas data already exists in the backbground... 
     and if so, update the popup view.
 */
-url = ''
-base_url = ''
+async function initializePopupContext() {
+    showLoader(true)
+    try {
+        url = await getUrl()
+        if (isCanvasGradebookUrl(url)) {
+            $('div#alert')
+                .css({'background':'#f6ae2d','color':'#4c4b4b'})
+                .html(`<p><b>Ready to fetch assignments!</b> Let's goooooo!</p>`)
 
-showLoader(true)
-
-getUrl().then((result) =>{
-    url = result
-    if (isCanvasGradebookUrl(url)) {
-        $(`div#alert`)
-            .css({'background':'#f6ae2d','color':'#4c4b4b'})
-            .html(`<p><b>Ready to fetch assignments!</b> Let's goooooo!</p>`)
-
-        getBaseUrl().then((baseResult) => {
-            base_url = baseResult
-        })
-        $('div#synergy_actions').hide().html('')
-        $('div#content').show()
-    } else if (isSynergyUrl(url)) {
-        render_synergy_mode()
-        showLoader(false)
-    } else {
+            try {
+                await ensureBaseUrl(true)
+            } catch (e) {
+                console.log('Failed to resolve Canvas base URL during popup init', e)
+            }
+            $('div#synergy_actions').hide().html('')
+            $('div#content').show()
+        } else if (isSynergyUrl(url)) {
+            render_synergy_mode()
+        } else {
+            $('div#alert')
+                .css({'background':'#db222a','color':'white'})
+                .html(`<p><b>Popup works on Canvas gradebook and Synergy pages.</b></p><p>Open Canvas to fetch assignments, or open Synergy to launch the mapper panel.</p>`)
+            $('div#synergy_actions').hide().html('')
+            $('div#content').hide()
+        }
+    } catch (e) {
+        console.log('Popup initialization failed', e)
         $('div#alert')
             .css({'background':'#db222a','color':'white'})
-            .html(`<p><b>Popup works on Canvas gradebook and Synergy pages.</b></p><p>Open Canvas to fetch assignments, or open Synergy to launch the mapper panel.</p>`)
-        showLoader(false)
+            .html('<p><b>Could not read active tab context.</b></p>')
         $('div#synergy_actions').hide().html('')
         $('div#content').hide()
+    } finally {
+        showLoader(false)
     }
-})
+}
 
-showLoader(false)
+initializePopupContext()
 
 
 let my_message_assign = {

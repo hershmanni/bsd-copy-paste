@@ -358,16 +358,6 @@ const add_comment_codes_to_score = (score, roundUpFrom, missingPref, use_cgr_fla
     return `${rounded_score} ! !ex`
 }
 
-function getScore(scores, id) {
-    let my_score = null
-    scores.forEach((score) => {
-        if (score.synergy_id == id) {
-            my_score = score
-        }
-    })
-    return my_score
-}
-
 function synergy_env_ready() {
     let doc = getFrameDocument()
     if (!doc) {
@@ -1072,33 +1062,78 @@ async function paste_scores_to_column(scores, column_index, roundUpFrom, missing
         score.score = add_comment_codes_to_score(score, roundUpFrom, missingPref, use_cgr_flag)
     })
 
-    let score_ids = prepared_scores.map((score) => score.synergy_id)
-    let synergy_ids = []
-
-    synergy_scores_table.find('span.student-perm-id').each((_, element) => {
-        let thisId = $(element).html()
-        if (score_ids.includes(thisId)) {
-            synergy_ids.push(thisId)
+    let scoreById = {}
+    prepared_scores.forEach((score) => {
+        let scoreId = String(score && score.synergy_id ? score.synergy_id : '').trim()
+        if (!scoreId) {
+            return
+        }
+        if (!scoreById[scoreId]) {
+            scoreById[scoreId] = score
         }
     })
 
-    let pushed = 0
-    let skipped = 0
-
-    await asyncForEach(synergy_ids, async (id) => {
-        let score = getScore(prepared_scores, id)
-        if (!score || score.score == null) {
-            skipped++
+    let visibleSynergyIds = []
+    let visibleSynergyIdSet = new Set()
+    let rowIndexByStudentId = {}
+    synergy_scores_table.find('span.student-perm-id').each((_, element) => {
+        let thisId = String($(element).text() || '').trim()
+        if (!thisId || visibleSynergyIdSet.has(thisId)) {
             return
         }
+        visibleSynergyIdSet.add(thisId)
+        visibleSynergyIds.push(thisId)
+        rowIndexByStudentId[thisId] = String($(element).closest('tr').attr('aria-rowindex') || '')
+    })
 
-        let row_index = synergy_scores_table
-            .find('span.student-perm-id:contains("' + id + '")')
-            .closest('tr')
-            .attr('aria-rowindex')
+    let outOfScopeScores = 0
+    Object.keys(scoreById).forEach((id) => {
+        if (!visibleSynergyIdSet.has(id)) {
+            outOfScopeScores += 1
+        }
+    })
+
+    let matched = 0
+    let pushed = 0
+    let skippedTarget = 0
+    let skippedNoCanvasMatch = 0
+    let skippedNoPasteValue = 0
+    let failedInjection = 0
+    let filledNoCanvasMatch = 0
+
+    await asyncForEach(visibleSynergyIds, async (id) => {
+        let score = scoreById[id]
+        let usingFallbackForMissingMatch = false
+        if (!score) {
+            usingFallbackForMissingMatch = true
+            score = {
+                score: '',
+                late: false,
+                excused: false,
+                missing: true
+            }
+            score.score = add_comment_codes_to_score(score, roundUpFrom, missingPref, use_cgr_flag)
+        }
+
+        if (score.score == null) {
+            skippedTarget++
+            if (usingFallbackForMissingMatch) {
+                skippedNoCanvasMatch++
+            } else {
+                skippedNoPasteValue++
+            }
+            return
+        }
+        matched++
+        if (usingFallbackForMissingMatch) {
+            filledNoCanvasMatch++
+        }
+
+        let row_index = rowIndexByStudentId[id]
 
         if (!row_index) {
-            skipped++
+            skippedTarget++
+            failedInjection++
             return
         }
 
@@ -1124,14 +1159,22 @@ async function paste_scores_to_column(scores, column_index, roundUpFrom, missing
             pushed++
         } catch (e) {
             console.log(`Failed to inject score for Synergy ID ${id} in column ${col_index}`, e)
-            skipped++
+            skippedTarget++
+            failedInjection++
         }
     })
 
     return {
-        matched: synergy_ids.length,
+        target_total: visibleSynergyIds.length,
+        matched: matched,
         pushed: pushed,
-        skipped: skipped,
+        skipped: skippedTarget,
+        skipped_target: skippedTarget,
+        skipped_no_canvas_match: skippedNoCanvasMatch,
+        skipped_no_paste_value: skippedNoPasteValue,
+        failed_injection: failedInjection,
+        filled_no_canvas_match: filledNoCanvasMatch,
+        out_of_scope_scores: outOfScopeScores,
         col_index: String(col_index)
     }
 }
@@ -2223,10 +2266,6 @@ function addMapperCard(cardData = {}) {
     createMapperCard(safeCardData)
 }
 
-function addMapperRow(rowData = {}) {
-    addMapperCard(rowData)
-}
-
 function buildCardSeedsFromMappings(mappings) {
     if (!Array.isArray(mappings) || mappings.length === 0) {
         return []
@@ -2468,7 +2507,12 @@ function myListener(request, sender, sendResponse) {
                 }
 
                 let result = await synergy_paste(scores, request.roundUpFrom, request.missingPref, request.use_cgr)
-                sendResponse(`Synergy paste complete: ${result.pushed}/${result.matched} pushed.`)
+                let statusText = `Synergy paste complete: ${result.pushed}/${result.matched} pushed.`
+                let skippedTarget = Number(result && result.skipped_target ? result.skipped_target : 0)
+                if (skippedTarget > 0) {
+                    statusText += ` ${skippedTarget} skipped in current section.`
+                }
+                sendResponse(statusText)
             } catch (e) {
                 console.log('Synergy paste failed', e)
                 sendResponse(`Synergy paste failed: ${e.message}`)

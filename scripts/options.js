@@ -3,7 +3,7 @@ function updateExplanation(value) {
     let example = Math.round((2 + value)*100)/100
     let example_result = 3
     let example_2 = Math.round((2 + value - 0.01)*100)/100
-    $('#explanation').html(`<p>With this value set, a score of <b>${example}</b> will round to <b>${example_result}</b>. And a score of <b>${example_2}</b> will round to <b>2</b>.}`)
+    $('#explanation').html(`<p>With this value set, a score of <b>${example}</b> will round to <b>${example_result}</b>. And a score of <b>${example_2}</b> will round to <b>2</b>.</p>`)
 }
 
 $(function() {
@@ -25,7 +25,7 @@ $(function() {
 $('#amount').on('input',() => {
     try {
         let val = parseFloat($('#amount').val())
-        if (typeof val == 'number') {
+        if (Number.isFinite(val)) {
             console.log(`Received input, rounding set to ${val}`)
             $('#rounding').slider('value',val)
             updateExplanation(val)
@@ -77,7 +77,7 @@ const saveOptions = () => {
 // stored in chrome.storage.
 const restoreOptions = () => {
   chrome.storage.sync.get(
-    keys = {
+    {
         roundUpFrom: 0.5,
         missingPref: "skip"
     },

@@ -201,7 +201,7 @@ function onRuntimeLifecycle() {
 async function getRoundingDecimal() {
     let p = new Promise((resolve, reject) => {
         chrome.storage.sync.get(
-            keys = {
+            {
                 roundUpFrom: 0.5
             },
             (items) => {
@@ -217,7 +217,7 @@ async function getRoundingDecimal() {
 async function getMissingPref() {
     let p = new Promise((resolve, reject) => {
         chrome.storage.sync.get(
-            keys = {
+            {
                 missingPref: "skip"
             },
             (items) => {
@@ -271,7 +271,7 @@ const getRubrics = (assignment) => {
 }
 
 const getRubric = (assignment, rubric_id) => {
-    rubric = {}
+    let rubric = {}
     getRubrics(assignment).forEach((r) =>{
         if (r.id == rubric_id) {
             rubric = r
@@ -319,7 +319,7 @@ function getScoresFromSubmissionsByRubricId(submissions, rubric_id) {
                         }
                     }
                 })
-            } else if (s.excused | s.missing) {
+            } else if (s.excused || s.missing) {
                 score = {
                     'synergy_id': s.synergy_id,
                     'rubric_id' : rubric_id,
@@ -555,7 +555,7 @@ function contextListener(info, tab) {
                 // console.log('context click w/ info, tab}', info, tab)
                 
                 // console.log(`paste requested on url: ${sender.tab.url}`);
-                rubric_id = info.menuItemId
+                let rubric_id = info.menuItemId
                 
                 // console.log(`rubric_id: ${rubric_id}`)
                 // console.log('Info: ',info)
@@ -648,7 +648,7 @@ function addContextListener() {
 }
 
 function mainListener(request, sender, sendResponse) {
-    if (request.from == 'popup.js' & request.to == "background.js" & request.title == "sending_assignments") {
+    if (request.from == 'popup.js' && request.to == "background.js" && request.title == "sending_assignments") {
         console.log('Background received a message from popup.js: ' + request.body);
         
         let assignments = request.attachment;
@@ -660,7 +660,7 @@ function mainListener(request, sender, sendResponse) {
         sendResponse('Thanks for sending! Assignments updated in background')
     }
 
-    if (request.from == 'popup.js' & request.to == "background.js" & request.title == "sending_submissions") {
+    if (request.from == 'popup.js' && request.to == "background.js" && request.title == "sending_submissions") {
         console.log('Background received a message from popup.js: ' + request.body);
 
         let submissions = request.attachment;
@@ -683,7 +683,7 @@ function mainListener(request, sender, sendResponse) {
         sendResponse('Thanks for sending! Submissions updated in background');
     }
 
-    if (request.from == 'popup.js' & request.to == "background.js" & request.title == "sending_submissions_bulk") {
+    if (request.from == 'popup.js' && request.to == "background.js" && request.title == "sending_submissions_bulk") {
         console.log('Background received bulk submissions from popup.js')
         let submissions_by_assignment = request.attachment || {}
         let assignment_keys = Object.keys(submissions_by_assignment)
@@ -718,7 +718,7 @@ function mainListener(request, sender, sendResponse) {
         sendResponse(`Stored bulk submissions for ${assignment_keys.length} assignments`)
     }
 
-    if (request.from == 'popup.js' & request.to == "background.js" & request.title == "checking_for_assignments") {
+    if (request.from == 'popup.js' && request.to == "background.js" && request.title == "checking_for_assignments") {
         console.log('Background received a message from popup.js: ' + request.body);
         bg_get_assignments()
         .then((assignments) => {
@@ -733,7 +733,7 @@ function mainListener(request, sender, sendResponse) {
         return true
     }
 
-    if (request.from == 'popup.js' & request.to == "background.js" & request.title == "checking_for_submissions") {
+    if (request.from == 'popup.js' && request.to == "background.js" && request.title == "checking_for_submissions") {
         console.log('Background received a message from popup.js: ' + request.body)
         bg_get_submissions()
         .then((submissions) => {
@@ -760,14 +760,14 @@ function mainListener(request, sender, sendResponse) {
         return true
     }
 
-    if (request.from == 'popup.js' & request.to == "background.js" & request.title == "checking_for_submissions_bulk") {
+    if (request.from == 'popup.js' && request.to == "background.js" && request.title == "checking_for_submissions_bulk") {
         bg_get_submissions_by_assignment().then((submissions_by_assignment) => {
             sendResponse(submissions_by_assignment)
         })
         return true
     }
 
-    if (request.from == 'popup.js' & request.to == "background.js" & request.title == "clear_data") {
+    if (request.from == 'popup.js' && request.to == "background.js" && request.title == "clear_data") {
         console.log('Background received a message from popup.js: ' + request.body)
         
         bg_clear_all().then(() => {
@@ -777,7 +777,7 @@ function mainListener(request, sender, sendResponse) {
         return true
     }
 
-    if (request.from == 'synergy.js' & request.to == 'background.js' & request.title == 'inject') {
+    if (request.from == 'synergy.js' && request.to == 'background.js' && request.title == 'inject') {
         // Process script inject...
         // console.log(`Received inject request: ${request.injectScript}`);
         // console.log(`Request contains: ${JSON.stringify(request)}`)
