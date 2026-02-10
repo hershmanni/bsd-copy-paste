@@ -9,9 +9,9 @@
     <div id="bsd-sidepanel">
         <div class="bsd-panel-head">
             <h1>To use:</h1>
-            <h2>1. Select Canvas Course &amp; Fetch Assignments </h2>
-            <h2>2. Click Clear & Auto-Match</h2>
-            <h2>3. Review assignment/target matches</h2>
+            <h2>1. Select Canvas Course</h2>
+            <h2>2. Fetch Canvas Scores</h2>
+            <h2>3. Clear, Auto-Match, then review targets</h2>
         </div>
 
         <div id="bsd-mapper-status"></div>
@@ -21,7 +21,6 @@
                 <span class="bsd-canvas-source-title">Canvas Source</span>
                 <div class="bsd-canvas-source-head-actions">
                     <button id="bsd-load-canvas-courses" type="button">Load Courses</button>
-                    <button id="bsd-fetch-course-assignments" type="button">Fetch Assignments</button>
                     <button id="bsd-stop-canvas-fetch" type="button" disabled>Stop</button>
                 </div>
             </div>
@@ -57,6 +56,10 @@
                     </table>
                 </div>
             </details>
+            <div class="bsd-canvas-fetch-row">
+                <span class="bsd-canvas-fetch-step">#2</span>
+                <button id="bsd-fetch-course-assignments" type="button">Fetch Canvas Scores</button>
+            </div>
             <div id="bsd-canvas-fetch-status"></div>
         </div>
 

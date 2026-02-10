@@ -417,6 +417,31 @@ function getSynergyScoresTable() {
     return $(doc).find('.dx-datagrid-rowsview table').eq(0)
 }
 
+function getVisibleSynergyStudentIds(limit = 200) {
+    let scoreTable = getSynergyScoresTable()
+    if (!scoreTable || scoreTable.length === 0) {
+        return []
+    }
+
+    let ids = []
+    let seen = new Set()
+
+    scoreTable.find('span.student-perm-id').each((_, element) => {
+        let id = normalizeHeaderText($(element).text())
+        if (!id || seen.has(id)) {
+            return
+        }
+
+        seen.add(id)
+        ids.push(id)
+        if (ids.length >= limit) {
+            return false
+        }
+    })
+
+    return ids
+}
+
 function normalizeHeaderText(text) {
     if (!text) {
         return ''
@@ -2499,9 +2524,11 @@ function myListener(request, sender, sendResponse) {
 
                 let headerInfo = buildHeaderMetaById(mapperDoc)
                 let columns = getVisibleSynergyColumns()
+                let studentIds = getVisibleSynergyStudentIds(200)
                 sendResponse({
                     ok: true,
                     columns: columns,
+                    studentIds: studentIds,
                     viewMode: headerInfo.viewMode || 'view_by_assignment'
                 })
             } catch (e) {

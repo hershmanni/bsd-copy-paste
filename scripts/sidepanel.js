@@ -5,6 +5,7 @@ const altMatchThreshold = 0.55
 let mapperState = {
     activeTabId: null,
     activeTabUrl: '',
+    synergyStudentIds: [],
     canvasBaseUrl: '',
     selectedCanvasCourseId: '',
     canvasCourseFilter: '',
@@ -104,6 +105,43 @@ async function requestSynergyMapperContext(tabId) {
     }
 
     return response
+}
+
+function normalizeSynergyId(rawValue) {
+    return String(rawValue || '').trim()
+}
+
+function getSynergyStudentIdSet(ids) {
+    let set = new Set()
+    if (!Array.isArray(ids)) {
+        return set
+    }
+    ids.forEach((id) => {
+        let normalized = normalizeSynergyId(id)
+        if (normalized) {
+            set.add(normalized)
+        }
+    })
+    return set
+}
+
+async function getSynergyStudentIdsForCourseFilter() {
+    let tab = await resolveSynergyTab()
+    if (!tab) {
+        mapperState.synergyStudentIds = []
+        return []
+    }
+
+    mapperState.activeTabId = tab.id
+    mapperState.activeTabUrl = tab.url || ''
+
+    let context = await requestSynergyMapperContext(tab.id)
+    let ids = Array.isArray(context.studentIds)
+        ? context.studentIds.map((id) => normalizeSynergyId(id)).filter(Boolean)
+        : []
+
+    mapperState.synergyStudentIds = ids
+    return ids
 }
 
 async function requestSynergyPaste(tabId, mapping) {
@@ -220,6 +258,8 @@ async function loadMapperStateFromStorage() {
     if (mapperState.selectedCanvasCourseId && Array.isArray(mapperState.assignments) && mapperState.assignments.length > 0) {
         mapperState.canvasAssignmentsByCourse[mapperState.selectedCanvasCourseId] = mapperState.assignments
     }
+
+    updateMapperReadyUi()
 }
 
 function setCanvasFetchStatus(text, isError = false) {
@@ -468,6 +508,7 @@ function renderCanvasAssignmentSummary() {
     if (assignments.length === 0) {
         summaryText.text('No Canvas assignments loaded yet.')
         tbody.append('<tr><td colspan="3">No assignment data.</td></tr>')
+        updateMapperReadyUi()
         return
     }
 
@@ -493,6 +534,7 @@ function renderCanvasAssignmentSummary() {
     summaryText.text(
         `Assignments: ${assignments.length}. With submissions: ${fetchedCount}. Total submissions: ${totalSubmissions}.`
     )
+    updateMapperReadyUi()
 }
 
 function parseSectionPeriod(sectionName) {
@@ -556,6 +598,80 @@ function addSynergyIdsToSubmissions(submissions, students) {
         submissions: output,
         unmatchedCount: unmatched
     }
+}
+
+function getCanvasUserCourseMatchIds(user) {
+    let ids = []
+    let candidates = [
+        user && user.login_id,
+        user && user.sis_user_id,
+        user && user.integration_id
+    ]
+
+    for (let i = 0; i < candidates.length; i++) {
+        let normalized = normalizeSynergyId(candidates[i])
+        if (normalized) {
+            ids.push(normalized)
+        }
+    }
+
+    return ids
+}
+
+async function fetchCanvasStudentSampleForCourse(courseId, baseUrl, sampleSize = 10) {
+    let users = await fetchCanvasJson(
+        baseUrl,
+        `/api/v1/courses/${courseId}/users?enrollment_type[]=student&per_page=${sampleSize}&page=1`
+    )
+
+    if (!Array.isArray(users) || users.length === 0) {
+        return []
+    }
+
+    let sampleIds = []
+    let seen = new Set()
+    users.forEach((user) => {
+        let ids = getCanvasUserCourseMatchIds(user)
+        ids.forEach((id) => {
+            if (!seen.has(id)) {
+                seen.add(id)
+                sampleIds.push(id)
+            }
+        })
+    })
+    return sampleIds
+}
+
+async function filterCanvasCoursesBySynergyRoster(courses, baseUrl, synergyStudentIds) {
+    if (!Array.isArray(courses) || courses.length === 0) {
+        return []
+    }
+
+    let synergyIdSet = getSynergyStudentIdSet(synergyStudentIds)
+    if (synergyIdSet.size === 0) {
+        return courses
+    }
+
+    let matchedCourses = []
+    for (let i = 0; i < courses.length; i++) {
+        let course = courses[i]
+        setCanvasFetchStatus(`Matching course roster ${i + 1}/${courses.length}: ${course.name}`)
+
+        try {
+            let sampleIds = await fetchCanvasStudentSampleForCourse(course.id, baseUrl, 10)
+            let hasMatch = sampleIds.some((id) => synergyIdSet.has(id))
+            if (hasMatch) {
+                matchedCourses.push(course)
+            }
+        } catch (e) {
+            if (isAbortError(e)) {
+                throw e
+            }
+            // skip courses we cannot sample and continue matching.
+        }
+    }
+
+    return matchedCourses
 }
 
 async function fetchCanvasCourses(baseUrl, includeConcluded = false) {
@@ -774,6 +890,7 @@ async function loadCanvasCourses(forceFromTabs = false) {
 
     beginCanvasFetch('Connecting to Canvas...')
     try {
+        let previousSelectedCourseId = String(mapperState.selectedCanvasCourseId || '')
         let includeConcluded = Boolean($('#bsd-canvas-include-concluded').prop('checked') || mapperState.canvasIncludeConcludedCourses)
         mapperState.canvasIncludeConcludedCourses = includeConcluded
         await chrome.storage.local.set({
@@ -781,11 +898,30 @@ async function loadCanvasCourses(forceFromTabs = false) {
         })
 
         let baseUrl = await ensureCanvasBaseUrl(forceFromTabs)
-        let courses = await fetchCanvasCourses(baseUrl, includeConcluded)
+        let allCourses = await fetchCanvasCourses(baseUrl, includeConcluded)
+        let courses = allCourses
+        let rosterFilterApplied = false
+
+        let synergyStudentIds = []
+        try {
+            synergyStudentIds = await getSynergyStudentIdsForCourseFilter()
+        } catch (e) {
+            synergyStudentIds = []
+        }
+
+        if (synergyStudentIds.length > 0) {
+            rosterFilterApplied = true
+            courses = await filterCanvasCoursesBySynergyRoster(allCourses, baseUrl, synergyStudentIds)
+        }
+
         mapperState.canvasCourses = courses
 
         if (!mapperState.selectedCanvasCourseId || !courses.find((course) => String(course.id) === String(mapperState.selectedCanvasCourseId))) {
             mapperState.selectedCanvasCourseId = courses.length > 0 ? String(courses[0].id) : ''
+        }
+
+        if (String(mapperState.selectedCanvasCourseId || '') !== previousSelectedCourseId) {
+            await clearMapperDataForCourseChange(mapperState.selectedCanvasCourseId)
         }
 
         renderCanvasCourseOptions()
@@ -798,7 +934,13 @@ async function loadCanvasCourses(forceFromTabs = false) {
             })
             let assignmentText = summary ? ` Loaded ${summary.assignmentsCount} assignment(s).` : ''
             let scopeText = includeConcluded ? ' (including archived).' : '.'
-            endCanvasFetch(`Loaded ${courses.length} Canvas course(s)${scopeText}${assignmentText}`)
+            let filterText = ''
+            if (rosterFilterApplied) {
+                filterText = ` Matched ${courses.length}/${allCourses.length} course(s) to current Synergy roster sample.`
+            } else if (allCourses.length > 0) {
+                filterText = ' Synergy roster matching unavailable; showing all Canvas courses.'
+            }
+            endCanvasFetch(`Loaded ${courses.length} Canvas course(s)${scopeText}${assignmentText}${filterText}`)
         } else {
             mapperState.selectedCanvasCourseId = ''
             await chrome.storage.local.set({
@@ -809,11 +951,18 @@ async function loadCanvasCourses(forceFromTabs = false) {
             })
             await loadMapperStateFromStorage()
             renderCanvasAssignmentSummary()
-            endCanvasFetch(includeConcluded ? 'No active or archived Canvas courses found.' : 'No active Canvas courses found.', true)
+            updateMapperReadyUi()
+
+            let noCoursesText = includeConcluded ? 'No active or archived Canvas courses found.' : 'No active Canvas courses found.'
+            if (allCourses.length > 0 && rosterFilterApplied) {
+                noCoursesText = 'No Canvas courses matched at least one student from the current Synergy class sample.'
+            }
+            endCanvasFetch(noCoursesText, true)
         }
     } catch (e) {
         renderCanvasCourseOptions()
         renderCanvasAssignmentSummary()
+        updateMapperReadyUi()
         if (isAbortError(e)) {
             endCanvasFetch('Canvas fetch stopped by user.')
             return
@@ -867,7 +1016,7 @@ async function loadCanvasAssignmentsForSelectedCourse(options = {}) {
         renderCanvasAssignmentSummary()
         updateCanvasActionButtons()
 
-        let loadedText = `Loaded ${assignments.length} assignment(s). Click "Fetch Assignments" to pull submissions.`
+        let loadedText = `Loaded ${assignments.length} assignment(s). Click "Fetch Canvas Scores" to pull submissions.`
         if (manageLoading) {
             endCanvasFetch(loadedText)
         } else {
@@ -1025,14 +1174,48 @@ async function fetchAllCanvasDataForCourse(courseId, options = {}) {
     }
 }
 
+async function clearMapperDataForCourseChange(selectedCourseId) {
+    let safeCourseId = String(selectedCourseId || '')
+
+    mapperState.selectedCanvasCourseId = safeCourseId
+    mapperState.assignments = []
+    mapperState.submissionsByAssignment = {}
+    mapperState.mappings = []
+
+    suppressNextMappingsRefresh = true
+    await chrome.storage.local.set({
+        canvasCourseId: safeCourseId,
+        assignments: [],
+        submissionsByAssignment: {},
+        submissions: [],
+        [mapperStorageKey]: []
+    })
+
+    $('#bsd-map-cards').html('')
+    mappingCardCounter = 0
+    mappingRowCounter = 0
+
+    renderCanvasAssignmentSummary()
+    updateMapperReadyUi()
+}
+
 async function onCanvasCourseSelectionChanged(forceAssignmentsRefresh = false) {
     if (canvasFetchInFlight) {
         return
     }
 
+    let previousCourseId = String(mapperState.selectedCanvasCourseId || '')
     let selectedCourseId = String($('#bsd-canvas-course-select').val() || '')
-    mapperState.selectedCanvasCourseId = selectedCourseId
-    await chrome.storage.local.set({ canvasCourseId: selectedCourseId })
+    let courseChanged = previousCourseId !== selectedCourseId
+
+    if (courseChanged) {
+        await clearMapperDataForCourseChange(selectedCourseId)
+        setMapperStatus('Canvas course changed. Existing auto-matches cleared.')
+    } else {
+        mapperState.selectedCanvasCourseId = selectedCourseId
+        await chrome.storage.local.set({ canvasCourseId: selectedCourseId })
+    }
+
     await loadCanvasAssignmentsForSelectedCourse({
         courseId: selectedCourseId,
         manageLoading: true,
@@ -1452,6 +1635,16 @@ function getFetchedAssignmentsForMapper() {
     })
     fetched.sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')))
     return fetched
+}
+
+function hasFetchedSubmissionsReady() {
+    return getFetchedAssignmentsForMapper().length > 0
+}
+
+function updateMapperReadyUi() {
+    let ready = hasFetchedSubmissionsReady()
+    $('.bsd-controls').toggleClass('bsd-no-submissions', !ready)
+    $('#bsd-map-cards').toggleClass('bsd-no-submissions', !ready)
 }
 
 function buildSynergyAssignmentOptions(selectEl, selectedSynergyAssignment) {
@@ -2309,6 +2502,9 @@ async function refreshMapperPanel(showStatus = true) {
 
         let context = await requestSynergyMapperContext(tab.id)
         mapperState.columns = Array.isArray(context.columns) ? context.columns : []
+        mapperState.synergyStudentIds = Array.isArray(context.studentIds)
+            ? context.studentIds.map((id) => normalizeSynergyId(id)).filter(Boolean)
+            : []
         mapperState.viewMode = context.viewMode || 'view_by_assignment'
 
         renderMappingsFromState()
@@ -2317,7 +2513,7 @@ async function refreshMapperPanel(showStatus = true) {
         if (showStatus) {
             let fetchedCount = getFetchedAssignmentsForMapper().length
             if (fetchedCount === 0) {
-                setMapperStatus('No fetched Canvas assignments found. Load Canvas courses, select a course, then click "Fetch Assignments".', true)
+                setMapperStatus('No fetched Canvas assignments found. Load Canvas courses, select a course, then click "Fetch Canvas Scores".', true)
             } else if (mapperState.columns.length === 0) {
                 setMapperStatus('Synergy columns not detected yet. Refresh gradebook and click Refresh Data.', true)
             } else {

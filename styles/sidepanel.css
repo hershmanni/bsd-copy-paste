@@ -181,6 +181,29 @@
     font-size: 11px;
 }
 
+#bsd-sidepanel .bsd-canvas-fetch-row {
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px solid #354350;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+#bsd-sidepanel .bsd-canvas-fetch-step {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 28px;
+    height: 22px;
+    padding: 0 6px;
+    border-radius: 999px;
+    background: rgba(20, 69, 52, 0.65);
+    color: #d9fff3;
+    font-size: 11px;
+    font-weight: 700;
+}
+
 #bsd-sidepanel .bsd-canvas-summary-table-wrap {
     margin-top: 6px;
     max-height: 180px;
@@ -297,23 +320,9 @@
     font-weight: 700;
     display: inline-flex;
     align-items: center;
-    gap: 6px;
-    box-shadow: 0 0 0 1px rgba(60, 201, 171, 0.35);
-}
-
-#bsd-sidepanel #bsd-fetch-course-assignments::before {
-    content: "#2";
-    display: inline-flex;
-    align-items: center;
     justify-content: center;
-    min-width: 20px;
-    height: 16px;
-    padding: 0 4px;
-    border-radius: 999px;
-    background: rgba(20, 69, 52, 0.65);
-    color: #d9fff3;
-    font-size: 10px;
-    font-weight: 700;
+    box-shadow: 0 0 0 1px rgba(60, 201, 171, 0.35);
+    flex: 1 1 auto;
 }
 
 #bsd-sidepanel #bsd-fetch-course-assignments:hover {
@@ -338,6 +347,18 @@
 
 #bsd-sidepanel #bsd-clear-mappings:hover {
     background: linear-gradient(180deg, #e4b160 0%, #c08f3d 100%);
+}
+
+#bsd-sidepanel .bsd-controls,
+#bsd-map-cards {
+    transition: opacity 160ms ease, filter 160ms ease;
+}
+
+#bsd-sidepanel .bsd-controls.bsd-no-submissions,
+#bsd-map-cards.bsd-no-submissions {
+    opacity: 0.35;
+    filter: saturate(0.5);
+    pointer-events: none;
 }
 
 #bsd-map-cards {
@@ -631,6 +652,18 @@
     }
 
     #bsd-sidepanel .bsd-canvas-source-head-actions {
+        width: 100%;
+    }
+
+    #bsd-sidepanel .bsd-canvas-fetch-row {
+        flex-wrap: wrap;
+    }
+
+    #bsd-sidepanel .bsd-canvas-fetch-step {
+        min-width: 32px;
+    }
+
+    #bsd-sidepanel #bsd-fetch-course-assignments {
         width: 100%;
     }
 
