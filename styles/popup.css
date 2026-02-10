@@ -21,6 +21,23 @@ div#alert {
     padding: 10px;
 }
 
+div#synergy_actions {
+    display: none;
+    width: 100%;
+    padding: 8px 0 4px 0;
+}
+
+div#synergy_actions button {
+    float: none;
+    display: inline-block;
+    margin: 5px 8px 5px 0;
+    width: 180px;
+}
+
+div#synergy_actions #synergy_status {
+    margin-top: 8px;
+}
+
 button {
     background: #008cff;
     color: white;
@@ -41,6 +58,38 @@ button:hover {
 div#assign_select {
     width: 100%;
     display: inline-block;
+}
+
+div#assign_bulk {
+    width: 100%;
+    display: inline-block;
+    margin-top: 10px;
+}
+
+div#assign_bulk select {
+    width: 100%;
+    min-height: 160px;
+    margin-top: 8px;
+    margin-bottom: 8px;
+    background: #343434;
+    color: #ffffff;
+    border: 1px solid #9a9a9a;
+}
+
+div#assign_bulk .bulk-actions {
+    display: inline-block;
+    width: 100%;
+}
+
+div#assign_bulk .bulk-actions button {
+    width: 150px;
+    margin-right: 8px;
+    margin-bottom: 8px;
+}
+
+div#assign_bulk #bulk_status {
+    margin-top: 6px;
+    margin-bottom: 10px;
 }
 
 div#rubrics_overview {

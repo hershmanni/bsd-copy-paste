@@ -16,6 +16,121 @@ async function getUrl() {
     return url
 }
 
+function isCanvasGradebookUrl(url) {
+    return Boolean(
+        url &&
+        (
+            url.match(/https\:\/\/\w+\.\w+\.instructure\.com\/courses\/\d+\/gradebook/g) ||
+            url.match(/https\:\/\/\w+\.instructure\.com\/courses\/\d+\/gradebook/g)
+        )
+    )
+}
+
+function isSynergyUrl(url) {
+    return Boolean(
+        url &&
+        (
+            url.match(/^https\:\/\/synergy\.beaverton\.k12\.or\.us\//) ||
+            url.match(/^https\:\/\/syntrn\.beaverton\.k12\.or\.us\//)
+        )
+    )
+}
+
+async function send_mapper_panel_command() {
+    let queryOptions = {currentWindow: true, active: true}
+    let tabs = await chrome.tabs.query(queryOptions)
+    if (!tabs || tabs.length === 0) {
+        $('#synergy_status').css('color', '#f9b1b1').text('No active tab found.')
+        return
+    }
+
+    let tab = tabs[0]
+    if (!isSynergyUrl(tab.url)) {
+        $('#synergy_status').css('color', '#f9b1b1').text('Open a Synergy tab first.')
+        return
+    }
+
+    let message = {
+        from: 'popup.js',
+        to: 'synergy.js',
+        title: 'show_mapper_panel'
+    }
+
+    try {
+        let response = await send_message_to_synergy_tab(tab.id, message)
+        $('#synergy_status').css('color', '#b4f7fe').text(response || 'Mapper panel opened.')
+    } catch (e) {
+        let err = String(e && e.message ? e.message : e)
+        let should_retry_with_inject =
+            err.includes('Could not establish connection') ||
+            err.includes('Receiving end does not exist')
+
+        if (!should_retry_with_inject) {
+            $('#synergy_status')
+                .css('color', '#f9b1b1')
+                .text('Could not open mapper panel. Refresh Synergy and try again.')
+            console.log('send_mapper_panel_command failed:', err)
+            return
+        }
+
+        try {
+            $('#synergy_status')
+                .css('color', '#b4f7fe')
+                .text('Attaching mapper scripts to tab...')
+
+            await chrome.scripting.executeScript({
+                target: { tabId: tab.id },
+                files: ['scripts/jquery-3.6.3.min.js', 'scripts/synergy.js']
+            })
+
+            let response = await send_message_to_synergy_tab(tab.id, message)
+            $('#synergy_status').css('color', '#b4f7fe').text(response || 'Mapper panel opened.')
+        } catch (injectErr) {
+            $('#synergy_status')
+                .css('color', '#f9b1b1')
+                .text('Could not open mapper panel. Refresh Synergy and try again.')
+            console.log('send_mapper_panel_command inject retry failed:', injectErr)
+        }
+    }
+}
+
+function send_message_to_synergy_tab(tab_id, message) {
+    return new Promise((resolve, reject) => {
+        chrome.tabs.sendMessage(tab_id, message, (response) => {
+            if (chrome.runtime.lastError) {
+                reject(new Error(chrome.runtime.lastError.message))
+                return
+            }
+            resolve(response)
+        })
+    })
+}
+
+function render_synergy_mode() {
+    $('div#alert')
+        .css({'background':'#f6ae2d','color':'#4c4b4b'})
+        .html('<p><b>Synergy mode detected.</b></p><p>Open or restore the Canvas to Synergy Mapper panel.</p>')
+
+    $('div#content').hide()
+    $('div#synergy_actions')
+        .show()
+        .html(`
+            <button id="open_mapper_panel" type="button">Open Mapper Panel</button>
+            <button id="refresh_mapper_panel" type="button">Refresh Mapper Panel</button>
+            <div id="synergy_status"></div>
+        `)
+
+    $('#open_mapper_panel').off('click').on('click', () => {
+        send_mapper_panel_command()
+    })
+
+    $('#refresh_mapper_panel').off('click').on('click', () => {
+        send_mapper_panel_command()
+    })
+
+    send_mapper_panel_command()
+}
+
 function showLoader(show) {
     if (show) {
         // gif reload solution based on https://stackoverflow.com/questions/9186928/animating-gifs-on-a-web-page-any-way-to-restart-them/9202472#9202472
@@ -91,17 +206,24 @@ function getAssignmentById(assignments, assign_id) {
 }
 
 async function send_to_background(data, my_type = 'assignments') {
-    let options = ['assignments', 'submissions']
+    let options = ['assignments', 'submissions', 'submissions_bulk']
     if (!options.includes(my_type)) {
         console.log(`inappropriate object type cannot send to background`)
         return null
+    }
+
+    let payloadSize = 0
+    if (Array.isArray(data)) {
+        payloadSize = data.length
+    } else if (data && typeof data == 'object') {
+        payloadSize = Object.keys(data).length
     }
 
     let my_message = {
         from: 'popup.js',
         to: 'background.js',
         title: `sending_${my_type}`,
-        body: `This message has ${data.length} ${my_type}`,
+        body: `This message has ${payloadSize} ${my_type}`,
         attachment: data
     }
 
@@ -110,6 +232,53 @@ async function send_to_background(data, my_type = 'assignments') {
     } catch (e) {
         console.log('Send to background failed with ' + e)
     }
+}
+
+function update_bulk_assign_select(assignments) {
+    if (!assignments || assignments.length === 0) {
+        $('div#assign_bulk').html('')
+        return
+    }
+
+    $('div#assign_bulk').html(`
+        <h4>Bulk Fetch for Synergy Mapping</h4>
+        <p>Select one or more Canvas assignments, then fetch them once for use in the Synergy mapping panel.</p>
+        <select id="assign_bulk_select" multiple></select>
+        <div class="bulk-actions">
+            <button id="bulk_select_all" type="button">Select all</button>
+            <button id="bulk_clear_all" type="button">Clear</button>
+            <button id="bulk_fetch_selected" type="button">Fetch selected</button>
+        </div>
+        <div id="bulk_status"></div>
+    `)
+
+    assignments.forEach((assignment) => {
+        let option = $('<option></option>')
+            .attr('value', assignment.id)
+            .text(assignment.name)
+        $('#assign_bulk_select').append(option)
+    })
+
+    let cached_assign_ids = Object.keys(submissions_by_assignment_cache)
+    if (cached_assign_ids.length > 0) {
+        $('#assign_bulk_select option').each((_, option) => {
+            if (cached_assign_ids.includes(String($(option).val()))) {
+                $(option).prop('selected', true)
+            }
+        })
+    }
+
+    $('#bulk_select_all').off('click').on('click', () => {
+        $('#assign_bulk_select option').prop('selected', true)
+    })
+
+    $('#bulk_clear_all').off('click').on('click', () => {
+        $('#assign_bulk_select option').prop('selected', false)
+    })
+
+    $('#bulk_fetch_selected').off('click').on('click', () => {
+        fetch_selected_assignments_click()
+    })
 }
 
 async function getAssignments(course_id) {
@@ -249,8 +418,15 @@ const add_synergy_id = (submissions, students) => {
     return(matched_submissions)
 }
 
-async function getSubmissions(course_id, assignments, assign_id) {
-    showLoader(true)
+async function getSubmissions(course_id, assignments, assign_id, opts = {}) {
+    let send_to_bg = opts.send_to_background ?? true
+    let update_view = opts.update_view ?? true
+    let use_loader = opts.use_loader ?? true
+
+    if (use_loader) {
+        showLoader(true)
+    }
+
     console.log(`Fetching scores w/ course (${course_id}), assign (${assign_id})`)
     let students = await getStudents(course_id)
     let page_n = 50
@@ -336,10 +512,19 @@ async function getSubmissions(course_id, assignments, assign_id) {
     console.log(`Submissions found: ${submissions.length}`)
     submissions = add_synergy_id(submissions, students)
     console.log(`after adding synergy... we have ${submissions.length} submissions`)
-    // send submissions to background.
-    send_to_background(submissions, 'submissions')
-    update_submissions_overview(submissions)
-    showLoader(false)
+
+    if (send_to_bg) {
+        send_to_background(submissions, 'submissions')
+    }
+
+    if (update_view) {
+        update_submissions_overview(submissions)
+    }
+
+    if (use_loader) {
+        showLoader(false)
+    }
+
     return(submissions)
 }
 
@@ -503,6 +688,10 @@ function countScoresFromSubmissionsByRubricId(submissions, rubric_id) {
 }
 
 async function getStudents(course_id) {
+    if (students_cache[course_id]) {
+        return students_cache[course_id]
+    }
+
     // let res = await fetch(`${base_url}/courses/${course_id}/students`)
     let res = await fetch(`${base_url}/api/v1/courses/${course_id}/sections?include[]=students`)
 
@@ -542,6 +731,7 @@ async function getStudents(course_id) {
     })
     console.log(`Students found: ${students.length}`, students)
     // console.log(students[3])
+    students_cache[course_id] = students
     return(students)
 }
 
@@ -844,8 +1034,16 @@ async function process_assign_change(course_id, assignments) {
     let selection = $('#assign_select select').find(':selected')
     let assign_id = selection.val()
     let assign_name = selection.text()
+    if (!assign_id) {
+        console.log('No assignment selected for process_assign_change')
+        return
+    }
     console.log(`Selection: ${assign_id} and ${assign_name}`)
     let assignment = getAssignmentById(assignments, assign_id)
+    if (!assignment) {
+        console.log(`Assignment ${assign_id} not found, cannot process change`)
+        return
+    }
     let submissions = await getSubmissions(course_id, assignments, assignment.id)
     update_rubric_list(assignments, submissions)
     makeSubmissionsTable(submissions, getRubrics(assignment))
@@ -853,6 +1051,81 @@ async function process_assign_change(course_id, assignments) {
     // new DataTable('table#submissions', {
     //     order: [[1, 'asc']]
     // })
+}
+
+function update_bulk_status(text, is_error = false) {
+    let color = is_error ? '#f9b1b1' : '#b4f7fe'
+    $('#bulk_status').css('color', color).text(text)
+}
+
+function update_bulk_status_from_cache() {
+    if ($('#bulk_status').length === 0) {
+        return
+    }
+    let count = Object.keys(submissions_by_assignment_cache).length
+    if (count > 0) {
+        update_bulk_status(`Loaded ${count} assignment(s) already fetched for Synergy mapping.`)
+    }
+}
+
+async function fetch_selected_assignments_click() {
+    if (!course_id || !assignments || assignments.length === 0) {
+        update_bulk_status('Load Canvas assignments first.', true)
+        return
+    }
+
+    let selected_ids = $('#assign_bulk_select').val() || []
+    if (selected_ids.length === 0) {
+        update_bulk_status('Select at least one assignment to fetch.', true)
+        return
+    }
+
+    showLoader(true)
+    update_bulk_status(`Fetching ${selected_ids.length} selected assignment(s)...`)
+
+    let submissions_by_assignment = {}
+    let preview_submissions = []
+    let preview_assignment = null
+
+    for (let i = 0; i < selected_ids.length; i++) {
+        let assignment = getAssignmentById(assignments, selected_ids[i])
+        if (!assignment) {
+            continue
+        }
+
+        try {
+            let submissions = await getSubmissions(course_id, assignments, assignment.id, {
+                send_to_background: false,
+                update_view: false,
+                use_loader: false
+            })
+            submissions_by_assignment[String(assignment.id)] = submissions
+
+            if (preview_assignment == null) {
+                preview_assignment = assignment
+                preview_submissions = submissions
+            }
+
+            update_bulk_status(`Fetched ${i + 1}/${selected_ids.length}: ${assignment.name}`)
+        } catch (e) {
+            console.log('Bulk assignment fetch error', e)
+        }
+    }
+
+    await send_to_background(submissions_by_assignment, 'submissions_bulk')
+    submissions_by_assignment_cache = submissions_by_assignment
+
+    let assign_count = Object.keys(submissions_by_assignment).length
+    update_bulk_status(`Fetched and stored ${assign_count} assignment(s) for Synergy mapping.`)
+
+    if (preview_assignment && preview_submissions.length > 0) {
+        update_assign_select(assignments, preview_assignment.id)
+        update_submissions_overview(preview_submissions)
+        update_rubric_list(assignments, preview_submissions)
+        makeSubmissionsTable(preview_submissions, getRubrics(preview_assignment))
+    }
+
+    showLoader(false)
 }
 
 
@@ -880,7 +1153,7 @@ async function fetch_assign_click() {
     const activeTabId = tabs[0].id
     console.log(`activeTabId: ${activeTabId} \n activeTabUrl ${tabs[0].url}`)
 
-    if (!tabs[0].url.match(/https\:\/\/\w+\.\w+\.instructure\.com\/courses\/\d+\/gradebook/g) & !tabs[0].url.match(/https\:\/\/\w+\.instructure\.com\/courses\/\d+\/gradebook/g)) {
+    if (!isCanvasGradebookUrl(tabs[0].url)) {
         console.log('Copy only works when viewing a Canvas Gradebook...')
         return(null)
     }
@@ -894,8 +1167,14 @@ async function fetch_assign_click() {
     assignments = await getAssignments(course_id)
     console.log(`assignments: ${assignments.length}... first assignment: ${assignments[0]}`)
     update_assign_select(assignments)
+    update_bulk_assign_select(assignments)
     send_to_background(assignments, 'assignments')
-    process_assign_change(course_id,assignments)
+    process_assign_change(course_id, assignments)
+    if (Object.keys(submissions_by_assignment_cache).length > 0) {
+        update_bulk_status_from_cache()
+    } else {
+        update_bulk_status('Tip: Use "Select all" + "Fetch selected" to preload assignments for Synergy mapping.')
+    }
     updateMissing()
 }
 
@@ -910,8 +1189,11 @@ async function clear_button_click() {
     showLoader(true)
     await chrome.runtime.sendMessage(message, (response) => {
         console.log(`Popup asked for clear_data and heard ${response}`)
+        submissions_by_assignment_cache = {}
+        students_cache = {}
         update_submissions_overview([])
         $('div#assign_select').html('')
+        $('div#assign_bulk').html('')
         $('div#rubrics_overview').html('')
         $('div#assign_submissions').html('')
     })
@@ -925,6 +1207,8 @@ var course_id = 0
 var assignments = []
 var rubrics = []
 var assign_id = 0
+var submissions_by_assignment_cache = {}
+var students_cache = {}
 
 
 $('button#fetch_assign').click(function(){
@@ -984,22 +1268,26 @@ showLoader(true)
 
 getUrl().then((result) =>{
     url = result
-    if (!url.match(/https\:\/\/\w+\.\w+\.instructure\.com\/courses\/\d+\/gradebook/g) & !url.match(/https\:\/\/\w+\.instructure\.com\/courses\/\d+\/gradebook/g)) {
-        // not on Canvas... popup should not open.
-        $('div#alert')
-        .css({'background':'#db222a','color':'white'})
-        .html(`<p><b>Popup only works on your canvas gradebook page</b>.</p><p>Please close this page and re-open when you are on your canvas gradebook page.</p>`)
-        showLoader(false);
-        $('div#content').hide()
-    } else {
+    if (isCanvasGradebookUrl(url)) {
         $(`div#alert`)
-        .css({'background':'#f6ae2d','color':'#4c4b4b'})
-        .html(`<p><b>Ready to fetch assignments!</b> Let's goooooo!</p>`)
-    
-        getBaseUrl().then((result) => {
-            base_url = result
+            .css({'background':'#f6ae2d','color':'#4c4b4b'})
+            .html(`<p><b>Ready to fetch assignments!</b> Let's goooooo!</p>`)
+
+        getBaseUrl().then((baseResult) => {
+            base_url = baseResult
         })
+        $('div#synergy_actions').hide().html('')
         $('div#content').show()
+    } else if (isSynergyUrl(url)) {
+        render_synergy_mode()
+        showLoader(false)
+    } else {
+        $('div#alert')
+            .css({'background':'#db222a','color':'white'})
+            .html(`<p><b>Popup works on Canvas gradebook and Synergy pages.</b></p><p>Open Canvas to fetch assignments, or open Synergy to launch the mapper panel.</p>`)
+        showLoader(false)
+        $('div#synergy_actions').hide().html('')
+        $('div#content').hide()
     }
 })
 
@@ -1014,10 +1302,12 @@ let my_message_assign = {
 }
 
  chrome.runtime.sendMessage(my_message_assign, (my_assignments) => {
-    if (Object.keys(my_assignments).length > 0) {
+    if (my_assignments && Object.keys(my_assignments).length > 0) {
         assignments = my_assignments;
         course_id = getCourseIdFromAssignments(assignments)
-        update_assign_select(my_assignments);
+        update_assign_select(my_assignments)
+        update_bulk_assign_select(my_assignments)
+        update_bulk_status_from_cache()
     } else {
         console.log('No assignments from background received by popup.')
     }
@@ -1030,7 +1320,27 @@ let my_message = {
     body: 'do you have any submissions?'
 }
 
+let my_message_bulk = {
+    from: 'popup.js',
+    to: 'background.js',
+    title: 'checking_for_submissions_bulk',
+    body: 'do you have any bulk submissions?'
+}
+
+chrome.runtime.sendMessage(my_message_bulk, (response) => {
+    if (!response || typeof response !== 'object') {
+        return
+    }
+    submissions_by_assignment_cache = response
+    update_bulk_status_from_cache()
+})
+
 chrome.runtime.sendMessage(my_message, (response) => {
+    if (!response || !response.submissions) {
+        console.log('No submissions payload from background received by popup.')
+        return
+    }
+
     let roundUpFrom = response.roundUpFrom
     let missingPref = response.missingPref
     let submissions = response.submissions
