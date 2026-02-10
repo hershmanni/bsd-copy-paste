@@ -2160,6 +2160,26 @@ function isRowMappingComplete(row) {
     return Boolean(mapping.col_index && mapping.assignment_id && mapping.rubric_id)
 }
 
+function isRowTargetUnmatched(row) {
+    let mapping = getMappingFromRow(row)
+    return Boolean(mapping.col_index && mapping.assignment_id && !mapping.rubric_id)
+}
+
+function updateRowMatchHighlight(row) {
+    row.toggleClass('bsd-row-unmatched-target', isRowTargetUnmatched(row))
+}
+
+function updateCardMatchHighlight(card) {
+    let hasUnmatchedTargets = false
+    getRowsForCard(card).each((_, rowEl) => {
+        if (isRowTargetUnmatched($(rowEl))) {
+            hasUnmatchedTargets = true
+            return false
+        }
+    })
+    card.toggleClass('bsd-card-unmatched-target', hasUnmatchedTargets)
+}
+
 function updateRowPasteButtonState(row) {
     let complete = isRowMappingComplete(row)
     row.find('.bsd-row-paste').prop('disabled', !complete)
@@ -2183,9 +2203,12 @@ function updateCardPasteStates(card) {
         return
     }
     getRowsForCard(card).each((_, rowEl) => {
-        updateRowPasteButtonState($(rowEl))
+        let row = $(rowEl)
+        updateRowPasteButtonState(row)
+        updateRowMatchHighlight(row)
     })
     updateCardPasteButtonState(card)
+    updateCardMatchHighlight(card)
 }
 
 async function pasteSingleRow(row) {
