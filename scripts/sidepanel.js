@@ -1,4 +1,5 @@
 const mapperStorageKey = 'synergyColumnMappings'
+const synergyCanvasMatchStorageKey = 'synergyCanvasCourseMatches'
 const assignmentMatchThreshold = 0.45
 const altMatchThreshold = 0.55
 
@@ -6,6 +7,9 @@ let mapperState = {
     activeTabId: null,
     activeTabUrl: '',
     synergyStudentIds: [],
+    synergyCourseDisplay: '',
+    synergyCourseKey: '',
+    synergyCanvasCourseMatches: {},
     canvasBaseUrl: '',
     selectedCanvasCourseId: '',
     canvasCourseFilter: '',
@@ -25,9 +29,11 @@ let mapperState = {
 let mappingCardCounter = 0
 let mappingRowCounter = 0
 let suppressNextMappingsRefresh = false
+let suppressLocalRefreshEvents = false
 let refreshInFlight = false
 let canvasFetchInFlight = false
 let canvasFetchController = null
+let settingsPersistTimer = null
 
 function setMapperStatus(text, isError = false) {
     $('#bsd-mapper-status')
@@ -111,6 +117,75 @@ function normalizeSynergyId(rawValue) {
     return String(rawValue || '').trim()
 }
 
+function normalizeSynergyCourseDisplay(value) {
+    return String(value || '')
+        .replace(/\s+/g, ' ')
+        .trim()
+}
+
+function buildSynergyCourseKeyFromDisplay(display) {
+    let normalized = normalizeSynergyCourseDisplay(display).toLowerCase()
+    if (!normalized) {
+        return ''
+    }
+    return `focus:${normalized}`
+}
+
+function updateSynergyCourseContextFromResponse(context) {
+    let display = normalizeSynergyCourseDisplay(context && context.focusDisplayString ? context.focusDisplayString : '')
+    mapperState.synergyCourseDisplay = display
+    mapperState.synergyCourseKey = buildSynergyCourseKeyFromDisplay(display)
+}
+
+function getStoredCanvasCourseMatchForCurrentSynergyCourse() {
+    let key = mapperState.synergyCourseKey
+    if (!key) {
+        return null
+    }
+    let matches = mapperState.synergyCanvasCourseMatches || {}
+    let match = matches[key]
+    if (!match || !match.canvasCourseId) {
+        return null
+    }
+    return match
+}
+
+function getCanvasCourseNameForId(courseId, courses = null) {
+    let wanted = String(courseId || '')
+    if (!wanted) {
+        return ''
+    }
+    let list = Array.isArray(courses) ? courses : mapperState.canvasCourses
+    let match = list.find((course) => String(course.id) === wanted)
+    return match ? String(match && match.name ? match.name : '') : ''
+}
+
+async function persistCanvasCourseMatchForCurrentSynergyCourse(canvasCourseId, canvasCourseName = '') {
+    let key = mapperState.synergyCourseKey
+    if (!key) {
+        return
+    }
+
+    let matches = { ...(mapperState.synergyCanvasCourseMatches || {}) }
+    let normalizedCourseId = String(canvasCourseId || '')
+    if (!normalizedCourseId) {
+        delete matches[key]
+    } else {
+        let resolvedName = String(canvasCourseName || getCanvasCourseNameForId(normalizedCourseId) || '').trim()
+        matches[key] = {
+            synergyCourseDisplay: mapperState.synergyCourseDisplay,
+            canvasCourseId: normalizedCourseId,
+            canvasCourseName: resolvedName,
+            updatedAt: new Date().toISOString()
+        }
+    }
+
+    mapperState.synergyCanvasCourseMatches = matches
+    await chrome.storage.local.set({
+        [synergyCanvasMatchStorageKey]: matches
+    })
+}
+
 function getSynergyStudentIdSet(ids) {
     let set = new Set()
     if (!Array.isArray(ids)) {
@@ -136,6 +211,7 @@ async function getSynergyStudentIdsForCourseFilter() {
     mapperState.activeTabUrl = tab.url || ''
 
     let context = await requestSynergyMapperContext(tab.id)
+    updateSynergyCourseContextFromResponse(context)
     let ids = Array.isArray(context.studentIds)
         ? context.studentIds.map((id) => normalizeSynergyId(id)).filter(Boolean)
         : []
@@ -220,10 +296,20 @@ function persistSettingsFromUi(showStatus = false) {
         }
         if (showStatus) {
             setMapperStatus(
-                `Settings saved. Round-up: ${mapperState.roundUpFrom.toFixed(2)}. Missing: ${getMissingPrefLabel(mapperState.missingPref)}.`
+                `Settings updated. Round-up: ${mapperState.roundUpFrom.toFixed(2)}. Missing: ${getMissingPrefLabel(mapperState.missingPref)}.`
             )
         }
     })
+}
+
+function queuePersistSettingsFromUi(showStatus = false) {
+    if (settingsPersistTimer) {
+        clearTimeout(settingsPersistTimer)
+    }
+    settingsPersistTimer = setTimeout(() => {
+        settingsPersistTimer = null
+        persistSettingsFromUi(showStatus)
+    }, 180)
 }
 
 async function loadMapperStateFromStorage() {
@@ -233,7 +319,7 @@ async function loadMapperStateFromStorage() {
         'submissions',
         'canvasBaseUrl',
         'canvasCourseId',
-        'canvasIncludeConcludedCourses',
+        synergyCanvasMatchStorageKey,
         mapperStorageKey
     ])
     let sync = await chrome.storage.sync.get({
@@ -253,13 +339,23 @@ async function loadMapperStateFromStorage() {
     mapperState.mappings = Array.isArray(local[mapperStorageKey]) ? local[mapperStorageKey] : []
     mapperState.canvasBaseUrl = String(local.canvasBaseUrl || '')
     mapperState.selectedCanvasCourseId = String(local.canvasCourseId || '')
-    mapperState.canvasIncludeConcludedCourses = Boolean(local.canvasIncludeConcludedCourses)
+    mapperState.canvasIncludeConcludedCourses = false
+    mapperState.synergyCanvasCourseMatches =
+        local[synergyCanvasMatchStorageKey] && typeof local[synergyCanvasMatchStorageKey] === 'object'
+            ? local[synergyCanvasMatchStorageKey]
+            : {}
 
     if (mapperState.selectedCanvasCourseId && Array.isArray(mapperState.assignments) && mapperState.assignments.length > 0) {
         mapperState.canvasAssignmentsByCourse[mapperState.selectedCanvasCourseId] = mapperState.assignments
     }
 
     updateMapperReadyUi()
+}
+
+function setCanvasCourseStatus(text, isError = false) {
+    $('#bsd-canvas-course-status')
+        .css('color', isError ? '#f9b1b1' : '#b4f7fe')
+        .text(text)
 }
 
 function setCanvasFetchStatus(text, isError = false) {
@@ -311,25 +407,36 @@ function stopCanvasFetch() {
     }
     try {
         canvasFetchController.abort()
+        setCanvasCourseStatus('Stopping Canvas fetch...')
         setCanvasFetchStatus('Stopping Canvas fetch...')
     } catch (e) {
+        setCanvasCourseStatus('Could not stop fetch cleanly.', true)
         setCanvasFetchStatus('Could not stop fetch cleanly.', true)
     }
 }
 
-function beginCanvasFetch(statusText = '') {
+function beginCanvasFetch(statusText = '', statusChannel = 'course') {
     canvasFetchController = new AbortController()
     setCanvasControlsDisabled(true)
     if (statusText) {
-        setCanvasFetchStatus(statusText)
+        if (statusChannel === 'fetch') {
+            setCanvasFetchStatus(statusText)
+        } else {
+            setCanvasCourseStatus(statusText)
+            setCanvasFetchStatus('')
+        }
     }
 }
 
-function endCanvasFetch(statusText = '', isError = false) {
+function endCanvasFetch(statusText = '', isError = false, statusChannel = 'course') {
     canvasFetchController = null
     setCanvasControlsDisabled(false)
     if (statusText) {
-        setCanvasFetchStatus(statusText, isError)
+        if (statusChannel === 'fetch') {
+            setCanvasFetchStatus(statusText, isError)
+        } else {
+            setCanvasCourseStatus(statusText, isError)
+        }
     }
 }
 
@@ -466,6 +573,7 @@ function renderCanvasCourseOptions() {
     })
 
     updateCanvasActionButtons()
+    updateCourseStepUi()
 }
 
 function getCachedAssignmentsForSelectedCourse() {
@@ -655,7 +763,7 @@ async function filterCanvasCoursesBySynergyRoster(courses, baseUrl, synergyStude
     let matchedCourses = []
     for (let i = 0; i < courses.length; i++) {
         let course = courses[i]
-        setCanvasFetchStatus(`Matching course roster ${i + 1}/${courses.length}: ${course.name}`)
+        setCanvasCourseStatus(`Matching course roster ${i + 1}/${courses.length}: ${course.name}`)
 
         try {
             let sampleIds = await fetchCanvasStudentSampleForCourse(course.id, baseUrl, 10)
@@ -685,7 +793,7 @@ async function fetchCanvasCourses(baseUrl, includeConcluded = false) {
 
         while (true) {
             let stateLabel = state === 'concluded' ? 'concluded courses' : 'active courses'
-            setCanvasFetchStatus(`Fetching Canvas ${stateLabel} (page ${page})...`)
+            setCanvasCourseStatus(`Fetching Canvas ${stateLabel} (page ${page})...`)
 
             let path = state === 'concluded'
                 ? `/api/v1/courses?enrollment_state=concluded&include[]=term&per_page=${perPage}&page=${page}`
@@ -741,7 +849,7 @@ async function fetchCanvasAssignmentsForCourse(courseId, baseUrl) {
     let assignments = []
 
     while (true) {
-        setCanvasFetchStatus(`Fetching assignments (page ${page})...`)
+        setCanvasCourseStatus(`Fetching assignments (page ${page})...`)
         let data = await fetchCanvasJson(
             baseUrl,
             `/api/v1/courses/${courseId}/assignments?include[]=rubric&order_by=due_at&per_page=${perPage}&page=${page}`
@@ -888,19 +996,17 @@ async function loadCanvasCourses(forceFromTabs = false) {
         return
     }
 
-    beginCanvasFetch('Connecting to Canvas...')
+    beginCanvasFetch('Connecting to Canvas...', 'course')
     try {
         let previousSelectedCourseId = String(mapperState.selectedCanvasCourseId || '')
         let includeConcluded = Boolean($('#bsd-canvas-include-concluded').prop('checked') || mapperState.canvasIncludeConcludedCourses)
         mapperState.canvasIncludeConcludedCourses = includeConcluded
-        await chrome.storage.local.set({
-            canvasIncludeConcludedCourses: includeConcluded
-        })
 
         let baseUrl = await ensureCanvasBaseUrl(forceFromTabs)
         let allCourses = await fetchCanvasCourses(baseUrl, includeConcluded)
         let courses = allCourses
         let rosterFilterApplied = false
+        let usedStoredMatch = false
 
         let synergyStudentIds = []
         try {
@@ -909,14 +1015,36 @@ async function loadCanvasCourses(forceFromTabs = false) {
             synergyStudentIds = []
         }
 
-        if (synergyStudentIds.length > 0) {
+        let storedMatch = getStoredCanvasCourseMatchForCurrentSynergyCourse()
+        let storedCanvasCourseId = String(storedMatch && storedMatch.canvasCourseId ? storedMatch.canvasCourseId : '')
+        if (storedCanvasCourseId) {
+            usedStoredMatch = true
+        }
+
+        if (synergyStudentIds.length > 0 && !usedStoredMatch) {
             rosterFilterApplied = true
             courses = await filterCanvasCoursesBySynergyRoster(allCourses, baseUrl, synergyStudentIds)
+        } else if (synergyStudentIds.length > 0 && usedStoredMatch) {
+            let storedExists = allCourses.some((course) => String(course.id) === storedCanvasCourseId)
+            if (!storedExists) {
+                usedStoredMatch = false
+                rosterFilterApplied = true
+                courses = await filterCanvasCoursesBySynergyRoster(allCourses, baseUrl, synergyStudentIds)
+            }
         }
 
         mapperState.canvasCourses = courses
 
-        if (!mapperState.selectedCanvasCourseId || !courses.find((course) => String(course.id) === String(mapperState.selectedCanvasCourseId))) {
+        let selectedFromStoredMatch = ''
+        if (usedStoredMatch && storedCanvasCourseId && courses.some((course) => String(course.id) === storedCanvasCourseId)) {
+            selectedFromStoredMatch = storedCanvasCourseId
+        }
+        if (selectedFromStoredMatch) {
+            mapperState.selectedCanvasCourseId = selectedFromStoredMatch
+        } else if (
+            !mapperState.selectedCanvasCourseId ||
+            !courses.find((course) => String(course.id) === String(mapperState.selectedCanvasCourseId))
+        ) {
             mapperState.selectedCanvasCourseId = courses.length > 0 ? String(courses[0].id) : ''
         }
 
@@ -935,12 +1063,18 @@ async function loadCanvasCourses(forceFromTabs = false) {
             let assignmentText = summary ? ` Loaded ${summary.assignmentsCount} assignment(s).` : ''
             let scopeText = includeConcluded ? ' (including archived).' : '.'
             let filterText = ''
-            if (rosterFilterApplied) {
+            if (usedStoredMatch && selectedFromStoredMatch) {
+                let storedCanvasName = storedMatch && storedMatch.canvasCourseName
+                    ? storedMatch.canvasCourseName
+                    : getCanvasCourseNameForId(selectedFromStoredMatch, courses)
+                let nameSuffix = storedCanvasName ? ` (${storedCanvasName})` : ''
+                filterText = ` Restored saved Canvas match for this Synergy class${nameSuffix}.`
+            } else if (rosterFilterApplied) {
                 filterText = ` Matched ${courses.length}/${allCourses.length} course(s) to current Synergy roster sample.`
             } else if (allCourses.length > 0) {
                 filterText = ' Synergy roster matching unavailable; showing all Canvas courses.'
             }
-            endCanvasFetch(`Loaded ${courses.length} Canvas course(s)${scopeText}${assignmentText}${filterText}`)
+            endCanvasFetch(`Loaded ${courses.length} Canvas course(s)${scopeText}${assignmentText}${filterText}`, false, 'course')
         } else {
             mapperState.selectedCanvasCourseId = ''
             await chrome.storage.local.set({
@@ -957,17 +1091,17 @@ async function loadCanvasCourses(forceFromTabs = false) {
             if (allCourses.length > 0 && rosterFilterApplied) {
                 noCoursesText = 'No Canvas courses matched at least one student from the current Synergy class sample.'
             }
-            endCanvasFetch(noCoursesText, true)
+            endCanvasFetch(noCoursesText, true, 'course')
         }
     } catch (e) {
         renderCanvasCourseOptions()
         renderCanvasAssignmentSummary()
         updateMapperReadyUi()
         if (isAbortError(e)) {
-            endCanvasFetch('Canvas fetch stopped by user.')
+            endCanvasFetch('Canvas fetch stopped by user.', false, 'course')
             return
         }
-        endCanvasFetch(`Canvas course load failed: ${e.message}`, true)
+        endCanvasFetch(`Canvas course load failed: ${e.message}`, true, 'course')
     }
 }
 
@@ -985,15 +1119,15 @@ async function loadCanvasAssignmentsForSelectedCourse(options = {}) {
     if (!selectedCourseId) {
         renderCanvasAssignmentSummary()
         if (manageLoading) {
-            endCanvasFetch('Select a Canvas course first.', true)
+            endCanvasFetch('Select a Canvas course first.', true, 'course')
         } else {
-            setCanvasFetchStatus('Select a Canvas course first.', true)
+            setCanvasCourseStatus('Select a Canvas course first.', true)
         }
         return null
     }
 
     if (manageLoading) {
-        beginCanvasFetch('Loading assignment list for selected course...')
+        beginCanvasFetch('Loading assignment list for selected course...', 'course')
     }
 
     try {
@@ -1018,9 +1152,9 @@ async function loadCanvasAssignmentsForSelectedCourse(options = {}) {
 
         let loadedText = `Loaded ${assignments.length} assignment(s). Click "Fetch Canvas Scores" to pull submissions.`
         if (manageLoading) {
-            endCanvasFetch(loadedText)
+            endCanvasFetch(loadedText, false, 'course')
         } else {
-            setCanvasFetchStatus(loadedText)
+            setCanvasCourseStatus(loadedText)
         }
 
         return {
@@ -1033,17 +1167,17 @@ async function loadCanvasAssignmentsForSelectedCourse(options = {}) {
         }
         if (isAbortError(e)) {
             if (manageLoading) {
-                endCanvasFetch('Canvas fetch stopped by user.')
+                endCanvasFetch('Canvas fetch stopped by user.', false, 'course')
             } else {
-                setCanvasFetchStatus('Canvas fetch stopped by user.')
+                setCanvasCourseStatus('Canvas fetch stopped by user.')
             }
             return null
         }
 
         if (manageLoading) {
-            endCanvasFetch(`Assignment load failed: ${e.message}`, true)
+            endCanvasFetch(`Assignment load failed: ${e.message}`, true, 'course')
         } else {
-            setCanvasFetchStatus(`Assignment load failed: ${e.message}`, true)
+            setCanvasCourseStatus(`Assignment load failed: ${e.message}`, true)
         }
         return null
     }
@@ -1057,7 +1191,7 @@ async function fetchAllCanvasDataForCourse(courseId, options = {}) {
     if (!selectedCourseId) {
         renderCanvasAssignmentSummary()
         if (manageLoading) {
-            endCanvasFetch('Select a Canvas course first.', true)
+            endCanvasFetch('Select a Canvas course first.', true, 'fetch')
         } else {
             setCanvasFetchStatus('Select a Canvas course first.', true)
         }
@@ -1066,11 +1200,15 @@ async function fetchAllCanvasDataForCourse(courseId, options = {}) {
 
     mapperState.selectedCanvasCourseId = selectedCourseId
     await chrome.storage.local.set({ canvasCourseId: selectedCourseId })
+    await persistCanvasCourseMatchForCurrentSynergyCourse(
+        selectedCourseId,
+        getCanvasCourseNameForId(selectedCourseId)
+    )
     $('#bsd-canvas-course-select').val(selectedCourseId)
     updateCanvasActionButtons()
 
     if (manageLoading) {
-        beginCanvasFetch('Fetching all course assignments and submissions...')
+        beginCanvasFetch('Fetching all course assignments and submissions...', 'fetch')
     }
 
     try {
@@ -1102,7 +1240,7 @@ async function fetchAllCanvasDataForCourse(courseId, options = {}) {
             renderCanvasAssignmentSummary()
             let emptyMessage = 'No rubric-enabled published assignments found in selected course.'
             if (manageLoading) {
-                endCanvasFetch(emptyMessage)
+                endCanvasFetch(emptyMessage, false, 'fetch')
             } else {
                 setCanvasFetchStatus(emptyMessage)
             }
@@ -1140,15 +1278,13 @@ async function fetchAllCanvasDataForCourse(courseId, options = {}) {
         await loadMapperStateFromStorage()
         mapperState.canvasAssignmentsByCourse[selectedCourseId] = assignments
         renderCanvasAssignmentSummary()
-        await refreshMapperPanel(false)
-        autoMatchAllMappings(true, true, true)
 
         if (unmatchedCount > 0) {
             console.log(`Ignored ${unmatchedCount} Canvas submissions that did not map to fetched course students.`)
         }
         let doneMessage = `Fetched ${assignments.length} assignment(s) for selected course.`
         if (manageLoading) {
-            endCanvasFetch(doneMessage)
+            endCanvasFetch(doneMessage, false, 'fetch')
         } else {
             setCanvasFetchStatus(doneMessage)
         }
@@ -1161,14 +1297,14 @@ async function fetchAllCanvasDataForCourse(courseId, options = {}) {
         renderCanvasAssignmentSummary()
         if (isAbortError(e)) {
             if (manageLoading) {
-                endCanvasFetch('Canvas fetch stopped by user.')
+                endCanvasFetch('Canvas fetch stopped by user.', false, 'fetch')
             } else {
                 setCanvasFetchStatus('Canvas fetch stopped by user.')
             }
             return null
         }
         if (manageLoading) {
-            endCanvasFetch(`Canvas fetch failed: ${e.message}`, true)
+            endCanvasFetch(`Canvas fetch failed: ${e.message}`, true, 'fetch')
         } else {
             setCanvasFetchStatus(`Canvas fetch failed: ${e.message}`, true)
         }
@@ -1217,6 +1353,10 @@ async function onCanvasCourseSelectionChanged(forceAssignmentsRefresh = false) {
         mapperState.selectedCanvasCourseId = selectedCourseId
         await chrome.storage.local.set({ canvasCourseId: selectedCourseId })
     }
+    await persistCanvasCourseMatchForCurrentSynergyCourse(
+        selectedCourseId,
+        getCanvasCourseNameForId(selectedCourseId)
+    )
 
     await loadCanvasAssignmentsForSelectedCourse({
         courseId: selectedCourseId,
@@ -1643,10 +1783,55 @@ function hasFetchedSubmissionsReady() {
     return getFetchedAssignmentsForMapper().length > 0
 }
 
+function hasPasteReadyMappings() {
+    let ready = false
+    $('#bsd-map-cards .bsd-map-row').each((_, rowEl) => {
+        if (isRowMappingComplete($(rowEl))) {
+            ready = true
+            return false
+        }
+    })
+    return ready
+}
+
+function hasSelectedCanvasCourse() {
+    let selectedCourseId = String($('#bsd-canvas-course-select').val() || mapperState.selectedCanvasCourseId || '').trim()
+    if (!selectedCourseId) {
+        return false
+    }
+
+    if (Array.isArray(mapperState.canvasCourses) && mapperState.canvasCourses.some((course) => String(course.id) === selectedCourseId)) {
+        return true
+    }
+
+    let selectEl = document.getElementById('bsd-canvas-course-select')
+    if (!selectEl || !selectEl.options) {
+        return false
+    }
+    return Array.from(selectEl.options).some((option) => String(option.value) === selectedCourseId)
+}
+
+function updateCourseStepUi() {
+    let hasCourse = hasSelectedCanvasCourse()
+    let hasFetched = hasCourse && hasFetchedSubmissionsReady()
+    let hasPasteReady = hasFetched && hasPasteReadyMappings()
+    let root = $('#bsd-sidepanel')
+
+    root.toggleClass('bsd-course-unselected', !hasCourse)
+    root.toggleClass('bsd-course-selected', hasCourse)
+    root.toggleClass('bsd-step-1-active', !hasCourse)
+    root.toggleClass('bsd-step-2-active', hasCourse && !hasFetched)
+    root.toggleClass('bsd-step-3-active', hasFetched && !hasPasteReady)
+    root.toggleClass('bsd-step-4-active', hasPasteReady)
+}
+
 function updateMapperReadyUi() {
-    let ready = hasFetchedSubmissionsReady()
+    let ready = hasSelectedCanvasCourse() && hasFetchedSubmissionsReady()
+    $('.bsd-panel-settings').toggleClass('bsd-no-submissions', !ready)
+    $('.bsd-add-assignment-row').toggleClass('bsd-no-submissions', !ready)
     $('.bsd-controls').toggleClass('bsd-no-submissions', !ready)
     $('#bsd-map-cards').toggleClass('bsd-no-submissions', !ready)
+    updateCourseStepUi()
 }
 
 function buildSynergyAssignmentOptions(selectEl, selectedSynergyAssignment) {
@@ -2070,7 +2255,7 @@ function createMapperCardRow(card, rowData = {}) {
             </div>
             <div class="bsd-row-buttons">
                 <button class="bsd-row-paste" type="button">Paste</button>
-                <button class="bsd-row-remove" type="button">Remove</button>
+                <button class="bsd-row-remove bsd-x-remove" type="button" title="Remove ALT">x</button>
             </div>
             <span class="bsd-row-status"></span>
         </div>
@@ -2135,7 +2320,7 @@ function createMapperCard(cardData = {}) {
                 <div class="bsd-card-actions">
                     <button class="bsd-card-add-alt" type="button">Add ALT</button>
                     <button class="bsd-card-paste" type="button">Paste Assignment</button>
-                    <button class="bsd-card-remove" type="button">Remove Assignment</button>
+                    <button class="bsd-card-remove bsd-x-remove" type="button" title="Remove assignment">x</button>
                 </div>
             </div>
             <div class="bsd-card-meta-row">
@@ -2301,12 +2486,14 @@ function persistMappingsFromUi() {
     chrome.storage.local.set({ [mapperStorageKey]: mappings })
 }
 
-function clearMapperMappings() {
+function clearMapperMappings(showStatus = true) {
     $('#bsd-map-cards').html('')
     mapperState.mappings = []
     suppressNextMappingsRefresh = true
     chrome.storage.local.set({ [mapperStorageKey]: [] })
-    setMapperStatus('Mappings cleared. Click Add Assignment or Auto-Match.')
+    if (showStatus) {
+        setMapperStatus('Mappings cleared. Click Add Assignment or Auto-Match.')
+    }
 }
 
 function getMappingFromRow(row) {
@@ -2371,6 +2558,30 @@ function updateCardMatchHighlight(card) {
     card.toggleClass('bsd-card-unmatched-target', hasUnmatchedTargets)
 }
 
+function getCardMappingState(card) {
+    let hasCardAssignment = Boolean(getCardCanvasAssignment(card))
+    let hasAnyRowSelections = false
+    let rows = getRowsForCard(card)
+    let complete = hasCardAssignment && rows.length > 0
+
+    rows.each((_, rowEl) => {
+        let row = $(rowEl)
+        let mapping = getMappingFromRow(row)
+        if (mapping.col_index || mapping.rubric_id) {
+            hasAnyRowSelections = true
+        }
+        if (!isRowMappingComplete(row)) {
+            complete = false
+        }
+    })
+
+    let hasAnyMappedInput = hasCardAssignment || hasAnyRowSelections
+    return {
+        complete: complete,
+        incomplete: hasAnyMappedInput && !complete
+    }
+}
+
 function updateRowPasteButtonState(row) {
     let complete = isRowMappingComplete(row)
     row.find('.bsd-row-paste').prop('disabled', !complete)
@@ -2400,6 +2611,10 @@ function updateCardPasteStates(card) {
     })
     updateCardPasteButtonState(card)
     updateCardMatchHighlight(card)
+    let mappingState = getCardMappingState(card)
+    card.toggleClass('bsd-card-ready', mappingState.complete)
+    card.toggleClass('bsd-card-incomplete', mappingState.incomplete)
+    updateCourseStepUi()
 }
 
 async function pasteSingleRow(row) {
@@ -2508,6 +2723,7 @@ async function refreshMapperPanel(showStatus = true) {
         mapperState.synergyStudentIds = Array.isArray(context.studentIds)
             ? context.studentIds.map((id) => normalizeSynergyId(id)).filter(Boolean)
             : []
+        updateSynergyCourseContextFromResponse(context)
         mapperState.viewMode = context.viewMode || 'view_by_assignment'
 
         renderMappingsFromState()
@@ -2530,6 +2746,22 @@ async function refreshMapperPanel(showStatus = true) {
     }
 }
 
+function setInstructionHoverStep(stepNumber = 0) {
+    let root = $('#bsd-sidepanel')
+    root.removeClass('bsd-hover-step-1 bsd-hover-step-2 bsd-hover-step-3 bsd-hover-step-4')
+    if (stepNumber >= 1 && stepNumber <= 4) {
+        root.addClass(`bsd-hover-step-${stepNumber}`)
+    }
+}
+
+function wireInstructionHoverUi() {
+    ;[1, 2, 3, 4].forEach((step) => {
+        let selector = `#bsd-step-title-${step}`
+        $(selector).on('mouseenter', () => setInstructionHoverStep(step))
+        $(selector).on('mouseleave', () => setInstructionHoverStep(0))
+    })
+}
+
 function wireUiEvents() {
     $('#bsd-load-canvas-courses').on('click', async () => {
         await loadCanvasCourses(true)
@@ -2537,10 +2769,7 @@ function wireUiEvents() {
 
     $('#bsd-canvas-include-concluded').on('change', async () => {
         mapperState.canvasIncludeConcludedCourses = Boolean($('#bsd-canvas-include-concluded').prop('checked'))
-        await chrome.storage.local.set({
-            canvasIncludeConcludedCourses: mapperState.canvasIncludeConcludedCourses
-        })
-        setCanvasFetchStatus('Course scope changed. Click "Load Courses" to refresh list.')
+        setCanvasCourseStatus('Course scope changed. Click "Load Courses" to refresh list.')
     })
 
     $('#bsd-canvas-course-filter').on('input', () => {
@@ -2553,10 +2782,23 @@ function wireUiEvents() {
     })
 
     $('#bsd-fetch-course-assignments').on('click', async () => {
-        await fetchAllCanvasDataForCourse(mapperState.selectedCanvasCourseId, {
-            manageLoading: true,
-            forceAssignmentsRefresh: false
-        })
+        suppressLocalRefreshEvents = true
+        try {
+            clearMapperMappings(false)
+            let fetchResult = await fetchAllCanvasDataForCourse(mapperState.selectedCanvasCourseId, {
+                manageLoading: true,
+                forceAssignmentsRefresh: false
+            })
+
+            if (!fetchResult) {
+                return
+            }
+
+            await refreshMapperPanel(false)
+            autoMatchAllMappings(true, true, true)
+        } finally {
+            suppressLocalRefreshEvents = false
+        }
     })
 
     $('#bsd-stop-canvas-fetch').on('click', () => {
@@ -2584,16 +2826,12 @@ function wireUiEvents() {
         await pasteAllMappings()
     })
 
-    $('#bsd-save-settings').on('click', () => {
-        persistSettingsFromUi(true)
-    })
-
-    $('#bsd-round-up-from').on('change', () => {
-        persistSettingsFromUi(false)
+    $('#bsd-round-up-from').on('input change', () => {
+        queuePersistSettingsFromUi(false)
     })
 
     $('#bsd-missing-pref').on('change', () => {
-        persistSettingsFromUi(false)
+        queuePersistSettingsFromUi(true)
     })
 }
 
@@ -2602,7 +2840,8 @@ async function initializeCanvasSourceUi() {
     $('#bsd-canvas-course-filter').val(mapperState.canvasCourseFilter || '')
     renderCanvasCourseOptions()
     renderCanvasAssignmentSummary()
-    setCanvasFetchStatus('Open an authenticated Canvas tab, then click "Load Courses".')
+    setCanvasCourseStatus('Open an authenticated Canvas tab, then click "Load Courses".')
+    setCanvasFetchStatus('')
     updateCanvasActionButtons()
     await loadCanvasCourses(false)
 }
@@ -2617,6 +2856,9 @@ function wireBackgroundEvents() {
             }
 
             let relevant = Boolean(changes.assignments || changes.submissionsByAssignment || mappingChanged)
+            if (relevant && suppressLocalRefreshEvents) {
+                return
+            }
             if (relevant) {
                 refreshMapperPanel(false)
             }
@@ -2647,6 +2889,7 @@ function wireBackgroundEvents() {
 
 $(async () => {
     wireUiEvents()
+    wireInstructionHoverUi()
     wireBackgroundEvents()
     await refreshMapperPanel(true)
     await initializeCanvasSourceUi()

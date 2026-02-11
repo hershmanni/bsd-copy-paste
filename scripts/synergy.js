@@ -155,6 +155,34 @@ function checkSynergyGradebookPage() {
     }
 }
 
+function getSynergyFocusDisplayString(preferredDoc = null) {
+    let docs = []
+    if (preferredDoc) {
+        docs.push(preferredDoc)
+    }
+    getAccessibleDocuments().forEach((doc) => {
+        if (!docs.includes(doc)) {
+            docs.push(doc)
+        }
+    })
+
+    for (let i = 0; i < docs.length; i++) {
+        try {
+            let focusNode = $(docs[i])
+                .find('span[data-bind*="FocusDisplayString"]')
+                .filter((_, el) => normalizeHeaderText($(el).text()))
+                .first()
+            if (focusNode.length > 0) {
+                return normalizeHeaderText(focusNode.text())
+            }
+        } catch (e) {
+            // pass inaccessible document
+        }
+    }
+
+    return ''
+}
+
 function getMapperDocument() {
     return getFrameDocument()
 }
@@ -2569,11 +2597,13 @@ function myListener(request, sender, sendResponse) {
                 let headerInfo = buildHeaderMetaById(mapperDoc)
                 let columns = getVisibleSynergyColumns()
                 let studentIds = getVisibleSynergyStudentIds(200)
+                let focusDisplayString = getSynergyFocusDisplayString(mapperDoc)
                 sendResponse({
                     ok: true,
                     columns: columns,
                     studentIds: studentIds,
-                    viewMode: headerInfo.viewMode || 'view_by_assignment'
+                    viewMode: headerInfo.viewMode || 'view_by_assignment',
+                    focusDisplayString: focusDisplayString
                 })
             } catch (e) {
                 sendResponse({

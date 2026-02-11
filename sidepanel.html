@@ -9,9 +9,11 @@
     <div id="bsd-sidepanel">
         <div class="bsd-panel-head">
             <h1>To use:</h1>
-            <h2>1. Select Canvas Course</h2>
-            <h2>2. Fetch Canvas Scores</h2>
-            <h2>3. Clear, Auto-Match, then review targets</h2>
+            <p class="bsd-panel-head-note">Start on the target Synergy gradebook section (View by Assignment or View by Standard).</p>
+            <h2 id="bsd-step-title-1">1. Load courses and pick the matching Canvas course</h2>
+            <h2 id="bsd-step-title-2">2. Fetch Canvas Scores</h2>
+            <h2 id="bsd-step-title-3">3. Clear, Auto-Match, review targets</h2>
+            <h2 id="bsd-step-title-4">4. Paste All Mapped or Paste one-at-a-time</h2>
         </div>
 
         <div id="bsd-mapper-status"></div>
@@ -41,7 +43,13 @@
                     <option value="">Choose Canvas course</option>
                 </select>
             </div>
-            <details id="bsd-canvas-assignment-summary" class="bsd-canvas-assignment-summary" open>
+            <div id="bsd-canvas-course-status"></div>
+            <div class="bsd-canvas-fetch-row">
+                <span class="bsd-canvas-fetch-step">#2</span>
+                <button id="bsd-fetch-course-assignments" type="button">Fetch Canvas Scores</button>
+            </div>
+            <div id="bsd-canvas-fetch-status"></div>
+            <details id="bsd-canvas-assignment-summary" class="bsd-canvas-assignment-summary">
                 <summary>No Canvas assignments loaded yet.</summary>
                 <div class="bsd-canvas-summary-table-wrap">
                     <table id="bsd-canvas-summary-table">
@@ -56,11 +64,6 @@
                     </table>
                 </div>
             </details>
-            <div class="bsd-canvas-fetch-row">
-                <span class="bsd-canvas-fetch-step">#2</span>
-                <button id="bsd-fetch-course-assignments" type="button">Fetch Canvas Scores</button>
-            </div>
-            <div id="bsd-canvas-fetch-status"></div>
         </div>
 
         <div class="bsd-panel-settings">
@@ -76,18 +79,25 @@
                     <option value="score">Score (N/R)</option>
                 </select>
             </div>
-            <button id="bsd-save-settings" class="bsd-save-settings" type="button">Save</button>
         </div>
 
         <div class="bsd-controls">
-            <button id="bsd-refresh-data" type="button">Refresh Data</button>
-            <button id="bsd-add-mapping" type="button">Add Assignment</button>
-            <button id="bsd-auto-match" type="button">Auto-Match</button>
-            <button id="bsd-clear-mappings" type="button">Clear</button>
-            <button id="bsd-paste-all" type="button">Paste All Mapped</button>
+            <div class="bsd-controls-top-row">
+                <div class="bsd-step-3-controls">
+                    <button id="bsd-auto-match" type="button">Auto-Match</button>
+                    <button id="bsd-clear-mappings" type="button">Clear</button>
+                    <button id="bsd-refresh-data" type="button">Refresh Data</button>
+                </div>
+                <div class="bsd-step-4-controls">
+                    <button id="bsd-paste-all" type="button">Paste All Mapped</button>
+                </div>
+            </div>
         </div>
 
         <div id="bsd-map-cards"></div>
+        <div class="bsd-add-assignment-row">
+            <button id="bsd-add-mapping" type="button">Add Assignment</button>
+        </div>
     </div>
 
     <script src="scripts/jquery-3.6.3.min.js"></script>
