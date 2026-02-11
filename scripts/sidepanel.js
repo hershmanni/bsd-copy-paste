@@ -123,7 +123,34 @@ function normalizeSynergyCourseDisplay(value) {
         .trim()
 }
 
+function extractSynergySectionCode(display) {
+    let normalized = normalizeSynergyCourseDisplay(display)
+    let match = normalized.match(/\bSEC:\s*([A-Za-z0-9._-]+)/i)
+    return match && match[1] ? String(match[1]).toLowerCase() : ''
+}
+
 function buildSynergyCourseKeyFromDisplay(display) {
+    let normalized = normalizeSynergyCourseDisplay(display)
+    let sectionCode = extractSynergySectionCode(normalized)
+    if (sectionCode) {
+        return `sec:${sectionCode}`
+    }
+
+    let normalizedLower = normalized.toLowerCase()
+    if (!normalizedLower) {
+        return ''
+    }
+
+    // Strip grading-period suffix (often after "/") so the key remains stable.
+    let beforeSlash = normalizedLower.split('/')[0].trim()
+    if (beforeSlash) {
+        return `focus:${beforeSlash}`
+    }
+
+    return `focus:${normalizedLower}`
+}
+
+function buildLegacySynergyCourseKeyFromDisplay(display) {
     let normalized = normalizeSynergyCourseDisplay(display).toLowerCase()
     if (!normalized) {
         return ''
@@ -139,11 +166,39 @@ function updateSynergyCourseContextFromResponse(context) {
 
 function getStoredCanvasCourseMatchForCurrentSynergyCourse() {
     let key = mapperState.synergyCourseKey
-    if (!key) {
+    let display = mapperState.synergyCourseDisplay
+    if (!key && !display) {
         return null
     }
+
     let matches = mapperState.synergyCanvasCourseMatches || {}
-    let match = matches[key]
+    let match = key ? matches[key] : null
+    if (!match && display) {
+        let legacyKey = buildLegacySynergyCourseKeyFromDisplay(display)
+        if (legacyKey) {
+            match = matches[legacyKey]
+        }
+    }
+    if (!match && display) {
+        let targetSection = extractSynergySectionCode(display)
+        if (targetSection) {
+            let candidates = Object.values(matches).filter((entry) => {
+                if (!entry || !entry.canvasCourseId) {
+                    return false
+                }
+                let section = extractSynergySectionCode(entry.synergyCourseDisplay || '')
+                return section && section === targetSection
+            })
+            if (candidates.length > 0) {
+                candidates.sort((a, b) => {
+                    let aTime = Date.parse(a.updatedAt || '') || 0
+                    let bTime = Date.parse(b.updatedAt || '') || 0
+                    return bTime - aTime
+                })
+                match = candidates[0]
+            }
+        }
+    }
     if (!match || !match.canvasCourseId) {
         return null
     }

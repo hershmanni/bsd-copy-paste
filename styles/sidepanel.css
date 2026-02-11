@@ -20,11 +20,10 @@
 }
 
 #bsd-sidepanel .bsd-panel-head {
-    display: flex;
-    flex-wrap: wrap;
-    justify-content: flex-start;
-    align-items: center;
-    gap: 8px;
+    display: grid;
+    grid-template-columns: 1fr;
+    align-items: start;
+    gap: 6px;
     padding: 8px 10px;
     border: 1px solid #354454;
     border-radius: 8px;
@@ -51,12 +50,13 @@
     margin: 0;
     font-size: 12px;
     line-height: 1.2;
-    padding: 2px 8px;
-    border-radius: 999px;
+    padding: 6px 8px;
+    border-radius: 6px;
     border: 1px solid transparent;
     color: #e9f6ff;
     opacity: 0.56;
     transition: opacity 140ms ease, box-shadow 140ms ease, transform 140ms ease;
+    width: 100%;
 }
 
 #bsd-sidepanel .bsd-panel-head h2:nth-of-type(1) {
@@ -86,6 +86,17 @@
     opacity: 1;
     transform: translateY(-1px);
     box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.2);
+    font-weight: 700;
+}
+
+#bsd-sidepanel.bsd-hover-step-1 #bsd-step-title-1,
+#bsd-sidepanel.bsd-hover-step-2 #bsd-step-title-2,
+#bsd-sidepanel.bsd-hover-step-3 #bsd-step-title-3,
+#bsd-sidepanel.bsd-hover-step-4 #bsd-step-title-4 {
+    opacity: 1;
+    transform: translateY(-1px);
+    box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.22);
+    font-weight: 700;
 }
 
 #bsd-mapper-status {
