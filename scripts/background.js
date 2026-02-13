@@ -303,6 +303,7 @@ function getScoresFromSubmissionsByRubricId(submissions, rubric_id) {
                             console.log(`Student ${s.canvas_id} / ${s.synergy_id} has no points for rubric_id ${r}`)
                             console.log('submission:',s)
                         }
+                        let rubricMissing = points === '' || points == null
 
                         score = {
                             'synergy_id': s.synergy_id,
@@ -311,7 +312,8 @@ function getScoresFromSubmissionsByRubricId(submissions, rubric_id) {
                             'short_name': s.short_name,
                             'excused': s.excused,
                             'late' : s.late,
-                            'missing':s.missing,
+                            // Treat blank rubric points as missing so Missing/zero preference applies.
+                            'missing': Boolean(s.missing || rubricMissing),
                             'course_id': s.course_id,
                             'canvas_id': s.canvas_id,
                             'assign_id': s.assign_id,

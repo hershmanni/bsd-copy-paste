@@ -651,6 +651,34 @@ function formatCanvasDateTime(value) {
     return parsed.toLocaleString()
 }
 
+function getMostRecentPostedAtFromSubmissions(submissions) {
+    if (!Array.isArray(submissions) || submissions.length === 0) {
+        return ''
+    }
+
+    let latestMs = 0
+    let latestRaw = ''
+    submissions.forEach((submission) => {
+        let candidate =
+            (submission && submission.posted_at) ||
+            (submission && submission.full_object && submission.full_object.posted_at) ||
+            ''
+        if (!candidate) {
+            return
+        }
+        let parsedMs = Date.parse(String(candidate))
+        if (Number.isNaN(parsedMs)) {
+            return
+        }
+        if (!latestRaw || parsedMs > latestMs) {
+            latestMs = parsedMs
+            latestRaw = String(candidate)
+        }
+    })
+
+    return latestRaw
+}
+
 function getStoredSubmissionsByAssignmentForCourse(assignments) {
     let output = {}
     let incoming = mapperState.submissionsByAssignment || {}
@@ -687,9 +715,10 @@ function renderCanvasAssignmentSummary() {
         }
         totalSubmissions += submissions.length
 
+        let mostRecentPostedAt = getMostRecentPostedAtFromSubmissions(submissions)
         let row = $('<tr></tr>')
         row.append($('<td></td>').text(String(assignment.name || assignmentId)))
-        row.append($('<td></td>').text(formatCanvasDateTime(assignment.updated_at || assignment.due_at || assignment.created_at)))
+        row.append($('<td></td>').text(formatCanvasDateTime(mostRecentPostedAt)))
         row.append($('<td></td>').text(String(submissions.length)))
         tbody.append(row)
     })
@@ -1020,6 +1049,7 @@ async function fetchCanvasSubmissionsForAssignment(courseId, assignment, student
                 canvas_id: String(item && item.user_id ? item.user_id : ''),
                 assign_id: String(assignment.id),
                 assign_name: String(assignment.name || ''),
+                posted_at: item ? item.posted_at : null,
                 entered_score: item ? item.entered_score : null,
                 excused: Boolean(item && item.excused),
                 late: Boolean(item && item.late),
@@ -1813,15 +1843,11 @@ function getAssignmentUpdatedText(assignment) {
     if (!assignment) {
         return '-'
     }
-    let value = assignment.updated_at || assignment.due_at || assignment.created_at
-    if (!value) {
-        return '-'
-    }
-    let parsed = new Date(value)
-    if (Number.isNaN(parsed.getTime())) {
-        return String(value)
-    }
-    return parsed.toLocaleString()
+    let assignmentId = String(assignment.id || '')
+    let submissions = assignmentId ? mapperState.submissionsByAssignment[assignmentId] : []
+    let mostRecentPostedAt = getMostRecentPostedAtFromSubmissions(submissions)
+    let value = mostRecentPostedAt || assignment.updated_at || assignment.due_at || assignment.created_at
+    return formatCanvasDateTime(value)
 }
 
 function getFetchedAssignmentsForMapper() {
@@ -1995,6 +2021,59 @@ function updateCanvasUpdatedCell(card, assignmentId) {
 
 function getMapperCards() {
     return $('#bsd-map-cards .bsd-map-card')
+}
+
+function getCardLastUpdatedTimestamp(card) {
+    let assignmentId = getCardCanvasAssignment(card)
+    if (!assignmentId) {
+        return -1
+    }
+    let assignment = getAssignmentById(mapperState.assignments, assignmentId)
+    if (!assignment) {
+        return -1
+    }
+    let assignmentIdKey = String(assignment.id || '')
+    let submissions = assignmentIdKey ? mapperState.submissionsByAssignment[assignmentIdKey] : []
+    let mostRecentPostedAt = getMostRecentPostedAtFromSubmissions(submissions)
+    let value = mostRecentPostedAt || assignment.updated_at || assignment.due_at || assignment.created_at
+    if (!value) {
+        return -1
+    }
+    let parsed = Date.parse(String(value))
+    return Number.isNaN(parsed) ? -1 : parsed
+}
+
+function sortMapperCardsByMostRecentUpdate() {
+    let container = $('#bsd-map-cards')
+    let cards = container.children('.bsd-map-card').get()
+    if (cards.length <= 1) {
+        return
+    }
+
+    cards.sort((a, b) => {
+        let aCard = $(a)
+        let bCard = $(b)
+        let aTime = getCardLastUpdatedTimestamp(aCard)
+        let bTime = getCardLastUpdatedTimestamp(bCard)
+        if (aTime !== bTime) {
+            return bTime - aTime
+        }
+
+        let aLabel = String(getCardSynergyAssignment(aCard) || '')
+        let bLabel = String(getCardSynergyAssignment(bCard) || '')
+        let labelCompare = aLabel.localeCompare(bLabel)
+        if (labelCompare !== 0) {
+            return labelCompare
+        }
+
+        let aId = Number(aCard.attr('data-card-id') || 0)
+        let bId = Number(bCard.attr('data-card-id') || 0)
+        return aId - bId
+    })
+
+    cards.forEach((cardEl) => {
+        container.append(cardEl)
+    })
 }
 
 function getRowsForCard(card) {
@@ -2284,6 +2363,7 @@ function autoMatchAllMappings(force = false, showStatus = true, shouldPersist = 
         }
         altMatches += matchResult.altMatchedCount
     })
+    sortMapperCardsByMostRecentUpdate()
 
     if (shouldPersist) {
         persistMappingsFromUi()
@@ -2414,6 +2494,7 @@ function createMapperCard(cardData = {}) {
             autoMatchCanvasAltForRow($(rowEl), false)
         })
         updateCardPasteStates(card)
+        sortMapperCardsByMostRecentUpdate()
         persistMappingsFromUi()
     })
 
@@ -2425,6 +2506,7 @@ function createMapperCard(cardData = {}) {
             autoMatchCanvasAltForRow($(rowEl), false)
         })
         updateCardPasteStates(card)
+        sortMapperCardsByMostRecentUpdate()
         persistMappingsFromUi()
     })
 
@@ -2748,6 +2830,7 @@ function renderMappingsFromState() {
     } else {
         seeds.forEach((seed) => addMapperCard(seed))
     }
+    sortMapperCardsByMostRecentUpdate()
 }
 
 async function refreshMapperPanel(showStatus = true) {
@@ -2860,21 +2943,14 @@ function wireUiEvents() {
         stopCanvasFetch()
     })
 
-    $('#bsd-refresh-data').on('click', async () => {
-        await refreshMapperPanel(true)
+    $('#bsd-refresh-data').on('click', () => {
+        clearMapperMappings(false)
+        autoMatchAllMappings(true, true, true)
     })
 
     $('#bsd-add-mapping').on('click', () => {
         addMapperCard({})
         persistMappingsFromUi()
-    })
-
-    $('#bsd-auto-match').on('click', () => {
-        autoMatchAllMappings(true, true, true)
-    })
-
-    $('#bsd-clear-mappings').on('click', () => {
-        clearMapperMappings()
     })
 
     $('#bsd-paste-all').on('click', async () => {

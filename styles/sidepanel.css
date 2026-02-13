@@ -381,15 +381,13 @@
     background: linear-gradient(180deg, #3cc890 0%, #2aa776 100%);
 }
 
-#bsd-sidepanel #bsd-auto-match,
-#bsd-sidepanel #bsd-clear-mappings {
+#bsd-sidepanel #bsd-refresh-data {
     background: linear-gradient(180deg, #2f9fff 0%, #1f84dd 100%);
     color: #f5fbff;
     font-weight: 700;
 }
 
-#bsd-sidepanel #bsd-auto-match:hover,
-#bsd-sidepanel #bsd-clear-mappings:hover {
+#bsd-sidepanel #bsd-refresh-data:hover {
     background: linear-gradient(180deg, #45adff 0%, #2f93ea 100%);
 }
 

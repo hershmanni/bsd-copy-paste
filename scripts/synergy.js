@@ -281,6 +281,7 @@ function getScoresFromSubmissionsByRubricId(submissions, rubric_id) {
                         if (Object.keys(s.rubric_assessment[r]).includes('points')) {
                             points = s.rubric_assessment[r].points
                         }
+                        let rubricMissing = points === '' || points == null
 
                         score = {
                             'synergy_id': s.synergy_id,
@@ -289,7 +290,8 @@ function getScoresFromSubmissionsByRubricId(submissions, rubric_id) {
                             'short_name': s.short_name,
                             'excused': s.excused,
                             'late': s.late,
-                            'missing': s.missing,
+                            // Treat blank rubric points as missing so Missing/zero preference applies.
+                            'missing': Boolean(s.missing || rubricMissing),
                             'course_id': s.course_id,
                             'canvas_id': s.canvas_id,
                             'assign_id': s.assign_id,
