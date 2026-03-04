@@ -2216,6 +2216,34 @@ function similarityScore(a, b) {
     return Math.max(lev, token, contains)
 }
 
+function assignmentSimilarityScore(targetText, candidateText) {
+    let target = normalizeForMatch(targetText)
+    let candidate = normalizeForMatch(candidateText)
+    if (!target || !candidate) {
+        return 0
+    }
+    if (target === candidate) {
+        return 1
+    }
+
+    let targetTokenCount = target.split(' ').filter(Boolean).length
+    let candidateTokenCount = candidate.split(' ').filter(Boolean).length
+    let canContainPriority = target.length >= 6 && targetTokenCount >= 2 && candidateTokenCount >= targetTokenCount
+
+    // If the Synergy title appears inside the Canvas title, prioritize this over nearby fuzzy matches.
+    if (canContainPriority && candidate.includes(target)) {
+        let coverage = Math.min(1, target.length / Math.max(candidate.length, 1))
+        return Math.min(0.995, 0.95 + (0.04 * coverage))
+    }
+
+    if (target.includes(candidate) && candidate.length >= 6 && candidateTokenCount >= 2) {
+        let coverage = Math.min(1, candidate.length / Math.max(target.length, 1))
+        return Math.min(0.9, 0.82 + (0.08 * coverage))
+    }
+
+    return similarityScore(target, candidate)
+}
+
 function normalizeTargetCodeToken(token) {
     let compact = String(token || '')
         .toUpperCase()
@@ -2334,12 +2362,12 @@ function altSimilarityScore(synergyAlt, rubricText) {
     return Math.max(base, code, contains)
 }
 
-function findBestMatch(targetText, candidates, getText, threshold = 0.5) {
+function findBestMatch(targetText, candidates, getText, threshold = 0.5, scoreFn = similarityScore) {
     let best = null
     let bestScore = -1
     candidates.forEach((candidate) => {
         let candidateText = getText(candidate)
-        let score = similarityScore(targetText, candidateText)
+        let score = scoreFn(targetText, candidateText)
         if (score > bestScore) {
             best = candidate
             bestScore = score
@@ -2983,7 +3011,8 @@ function autoMatchCanvasAssignmentForCard(card, force = false) {
         synergyAssignment,
         fetchedAssignments,
         (assignment) => String(assignment.name || ''),
-        assignmentMatchThreshold
+        assignmentMatchThreshold,
+        assignmentSimilarityScore
     )
     if (!matched || !matched.item) {
         return false
