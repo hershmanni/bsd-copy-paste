@@ -277,6 +277,80 @@
     min-height: 14px;
 }
 
+#bsd-sidepanel .bsd-hidden {
+    display: none !important;
+}
+
+#bsd-sidepanel .bsd-copy-tooltip {
+    position: fixed;
+    left: 0;
+    top: 0;
+    z-index: 2147483000;
+    padding: 4px 8px;
+    border-radius: 999px;
+    border: 1px solid rgba(126, 203, 100, 0.8);
+    background: rgba(18, 33, 46, 0.96);
+    color: #dfffe0;
+    font-size: 11px;
+    font-weight: 600;
+    line-height: 1.2;
+    white-space: nowrap;
+    pointer-events: none;
+    opacity: 0;
+    transform: translateY(-3px);
+    transition: opacity 180ms ease, transform 180ms ease;
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.32);
+}
+
+#bsd-sidepanel .bsd-copy-tooltip.bsd-visible {
+    opacity: 1;
+    transform: translateY(0);
+}
+
+#bsd-sidepanel .bsd-canvas-fetch-progress {
+    margin-top: 6px;
+    padding: 6px 8px;
+    border: 1px solid #374452;
+    border-radius: 6px;
+    background: rgba(33, 41, 50, 0.9);
+}
+
+#bsd-sidepanel .bsd-canvas-fetch-progress-track {
+    position: relative;
+    height: 10px;
+    border-radius: 999px;
+    overflow: hidden;
+    background: #3b4653;
+}
+
+#bsd-sidepanel .bsd-canvas-fetch-progress-fetched,
+#bsd-sidepanel .bsd-canvas-fetch-progress-active {
+    position: absolute;
+    top: 0;
+    height: 100%;
+    transition: width 140ms linear, left 140ms linear;
+}
+
+#bsd-sidepanel .bsd-canvas-fetch-progress-fetched {
+    left: 0;
+    width: 0%;
+    background: linear-gradient(180deg, #82d56b 0%, #5fb44a 100%);
+}
+
+#bsd-sidepanel .bsd-canvas-fetch-progress-active {
+    left: 0;
+    width: 0%;
+    background: linear-gradient(180deg, #4db4ff 0%, #2f92e8 100%);
+    box-shadow: inset 0 0 0 1px rgba(216, 241, 255, 0.25);
+}
+
+#bsd-sidepanel .bsd-canvas-fetch-progress-label {
+    margin-top: 4px;
+    color: #bcdaf2;
+    font-size: 10px;
+    line-height: 1.2;
+}
+
 #bsd-sidepanel .bsd-panel-settings {
     display: flex;
     flex-wrap: nowrap;
@@ -409,6 +483,38 @@
     margin: 2px 0 10px;
 }
 
+#bsd-sidepanel .bsd-sort-controls {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+    margin: -2px 0 8px;
+    padding: 6px 8px;
+    border: 1px solid #354454;
+    border-radius: 6px;
+    background: rgba(43, 54, 66, 0.65);
+}
+
+#bsd-sidepanel .bsd-sort-controls #bsd-sort-method {
+    background: #2b3138;
+    color: #ffffff;
+    border: 1px solid #586473;
+    border-radius: 4px;
+    min-height: 26px;
+    padding: 3px 6px;
+    min-width: 220px;
+}
+
+#bsd-sidepanel #bsd-apply-sort {
+    background: linear-gradient(180deg, #3b8fd9 0%, #2d76b7 100%);
+    color: #f5fbff;
+    font-weight: 700;
+}
+
+#bsd-sidepanel #bsd-apply-sort:hover {
+    background: linear-gradient(180deg, #4b9de3 0%, #3a84c7 100%);
+}
+
 #bsd-sidepanel .bsd-controls,
 #bsd-map-cards {
     transition: opacity 160ms ease, filter 160ms ease;
@@ -449,6 +555,7 @@
 
 #bsd-sidepanel.bsd-hover-step-2 .bsd-canvas-fetch-row,
 #bsd-sidepanel.bsd-hover-step-2 #bsd-canvas-fetch-status,
+#bsd-sidepanel.bsd-hover-step-2 #bsd-canvas-fetch-progress,
 #bsd-sidepanel.bsd-hover-step-2 #bsd-canvas-assignment-summary {
     box-shadow: 0 0 0 1px rgba(126, 203, 100, 0.28);
     border-radius: 6px;
@@ -457,7 +564,8 @@
 
 #bsd-sidepanel.bsd-hover-step-3 .bsd-step-3-controls,
 #bsd-sidepanel.bsd-hover-step-3 #bsd-map-cards,
-#bsd-sidepanel.bsd-hover-step-3 .bsd-add-assignment-row {
+#bsd-sidepanel.bsd-hover-step-3 .bsd-add-assignment-row,
+#bsd-sidepanel.bsd-hover-step-3 .bsd-sort-controls {
     box-shadow: 0 0 0 1px rgba(213, 162, 77, 0.32);
     border-radius: 6px;
     background: rgba(213, 162, 77, 0.08);
@@ -773,6 +881,10 @@
         min-width: 0;
         margin-top: 2px;
     }
+
+    #bsd-sidepanel .bsd-sort-controls #bsd-sort-method {
+        min-width: 180px;
+    }
 }
 
 @media (max-width: 620px) {
@@ -823,6 +935,16 @@
     #bsd-sidepanel #bsd-missing-pref {
         width: 136px;
         max-width: 48vw;
+    }
+
+    #bsd-sidepanel .bsd-sort-controls {
+        align-items: stretch;
+    }
+
+    #bsd-sidepanel .bsd-sort-controls #bsd-sort-method,
+    #bsd-sidepanel #bsd-apply-sort {
+        width: 100%;
+        min-width: 0;
     }
 
     .bsd-card-head {

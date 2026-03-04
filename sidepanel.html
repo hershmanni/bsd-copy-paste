@@ -49,6 +49,13 @@
                 <button id="bsd-fetch-course-assignments" type="button">Fetch Canvas Scores</button>
             </div>
             <div id="bsd-canvas-fetch-status"></div>
+            <div id="bsd-canvas-fetch-progress" class="bsd-canvas-fetch-progress bsd-hidden">
+                <div class="bsd-canvas-fetch-progress-track">
+                    <div id="bsd-canvas-fetch-progress-fetched" class="bsd-canvas-fetch-progress-fetched"></div>
+                    <div id="bsd-canvas-fetch-progress-active" class="bsd-canvas-fetch-progress-active"></div>
+                </div>
+                <div id="bsd-canvas-fetch-progress-label" class="bsd-canvas-fetch-progress-label"></div>
+            </div>
             <details id="bsd-canvas-assignment-summary" class="bsd-canvas-assignment-summary">
                 <summary>No Canvas assignments loaded yet.</summary>
                 <div class="bsd-canvas-summary-table-wrap">
@@ -90,6 +97,17 @@
                     <button id="bsd-paste-all" type="button">Paste All Mapped</button>
                 </div>
             </div>
+        </div>
+
+        <div class="bsd-sort-controls">
+            <span class="bsd-inline-label">Sort tiles:</span>
+            <select id="bsd-sort-method">
+                <option value="canvas_recent_desc">Most Recent First</option>
+                <option value="canvas_name_asc">Canvas Assignment A-Z</option>
+                <option value="synergy_name_asc">Synergy Assignment A-Z</option>
+                <option value="synergy_order_ltr">Synergy Left-Right</option>
+            </select>
+            <button id="bsd-apply-sort" type="button">Sort Tiles</button>
         </div>
 
         <div id="bsd-map-cards"></div>

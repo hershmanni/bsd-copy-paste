@@ -1,5 +1,11 @@
 const mapperStorageKey = 'synergyColumnMappings'
 const synergyCanvasMatchStorageKey = 'synergyCanvasCourseMatches'
+const mapperSortMethodStorageKey = 'mapperSortMethod'
+const canvasAssignmentsByCourseStorageKey = 'canvasAssignmentsByCourse'
+const submissionsByAssignmentByCourseStorageKey = 'submissionsByAssignmentByCourse'
+const canvasSubmissionSyncByCourseStorageKey = 'canvasSubmissionSyncByCourse'
+const defaultMapperSortMethod = 'canvas_recent_desc'
+const canvasSubmissionsFetchConcurrency = 6
 const assignmentMatchThreshold = 0.45
 const altMatchThreshold = 0.55
 
@@ -16,6 +22,8 @@ let mapperState = {
     canvasIncludeConcludedCourses: false,
     canvasCourses: [],
     canvasAssignmentsByCourse: {},
+    submissionsByAssignmentByCourse: {},
+    canvasSubmissionSyncByCourse: {},
     canvasStudentsByCourse: {},
     viewMode: 'view_by_assignment',
     columns: [],
@@ -23,6 +31,7 @@ let mapperState = {
     submissionsByAssignment: {},
     roundUpFrom: 0.5,
     missingPref: 'skip',
+    sortMethod: defaultMapperSortMethod,
     mappings: []
 }
 
@@ -34,6 +43,14 @@ let refreshInFlight = false
 let canvasFetchInFlight = false
 let canvasFetchController = null
 let settingsPersistTimer = null
+let clipboardCopyWarningShown = false
+let clipboardCopyTooltipHideTimer = null
+let canvasCacheTrimmedForQuota = false
+let canvasFetchProgressState = {
+    total: 0,
+    fetched: 0,
+    active: 0
+}
 
 function setMapperStatus(text, isError = false) {
     $('#bsd-mapper-status')
@@ -293,6 +310,102 @@ async function requestSynergyPaste(tabId, mapping) {
     return response.result || {}
 }
 
+async function copyTextToClipboard(text) {
+    let value = String(text || '').trim()
+    if (!value) {
+        return false
+    }
+
+    try {
+        if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+            await navigator.clipboard.writeText(value)
+            return true
+        }
+    } catch (e) {
+        // fall through to legacy copy path
+    }
+
+    try {
+        let textarea = document.createElement('textarea')
+        textarea.value = value
+        textarea.setAttribute('readonly', 'readonly')
+        textarea.style.position = 'fixed'
+        textarea.style.left = '-9999px'
+        textarea.style.top = '-9999px'
+        textarea.style.opacity = '0'
+        document.body.appendChild(textarea)
+        textarea.focus()
+        textarea.select()
+        textarea.setSelectionRange(0, textarea.value.length)
+        let copied = document.execCommand('copy')
+        document.body.removeChild(textarea)
+        return Boolean(copied)
+    } catch (e) {
+        return false
+    }
+}
+
+function getSelectedCanvasAssignmentLabel(selectEl) {
+    let label = normalizeHeaderText(selectEl.find('option:selected').text())
+    if (!label || label.toLowerCase() === 'choose canvas assignment') {
+        return ''
+    }
+    return label
+}
+
+function getOrCreateClipboardCopyTooltip() {
+    let existing = document.getElementById('bsd-copy-tooltip')
+    if (existing) {
+        return existing
+    }
+
+    let root = document.getElementById('bsd-sidepanel') || document.body
+    let tooltip = document.createElement('div')
+    tooltip.id = 'bsd-copy-tooltip'
+    tooltip.className = 'bsd-copy-tooltip'
+    tooltip.setAttribute('role', 'status')
+    tooltip.setAttribute('aria-live', 'polite')
+    root.appendChild(tooltip)
+    return tooltip
+}
+
+function showClipboardCopyTooltip(anchorEl, message = 'Copied to clipboard') {
+    let anchor = anchorEl && anchorEl.length ? anchorEl[0] : anchorEl
+    if (!anchor || typeof anchor.getBoundingClientRect !== 'function') {
+        return
+    }
+
+    let tooltip = getOrCreateClipboardCopyTooltip()
+    tooltip.textContent = String(message || 'Copied').trim() || 'Copied'
+    tooltip.classList.remove('bsd-visible')
+
+    if (clipboardCopyTooltipHideTimer) {
+        window.clearTimeout(clipboardCopyTooltipHideTimer)
+        clipboardCopyTooltipHideTimer = null
+    }
+
+    let rect = anchor.getBoundingClientRect()
+    let margin = 8
+    let offset = 8
+    let tooltipWidth = tooltip.offsetWidth || 140
+    let tooltipHeight = tooltip.offsetHeight || 24
+    let left = rect.left + (rect.width / 2) - (tooltipWidth / 2)
+    left = Math.max(margin, Math.min(left, window.innerWidth - tooltipWidth - margin))
+    let top = rect.bottom + offset
+    if (top + tooltipHeight + margin > window.innerHeight) {
+        top = Math.max(margin, rect.top - tooltipHeight - offset)
+    }
+
+    tooltip.style.left = `${Math.round(left)}px`
+    tooltip.style.top = `${Math.round(top)}px`
+    tooltip.classList.add('bsd-visible')
+
+    clipboardCopyTooltipHideTimer = window.setTimeout(() => {
+        tooltip.classList.remove('bsd-visible')
+        clipboardCopyTooltipHideTimer = null
+    }, 950)
+}
+
 function normalizeRoundUpFromValue(rawValue, fallback = 0.5) {
     let parsed = Number(rawValue)
     if (!Number.isFinite(parsed)) {
@@ -311,6 +424,29 @@ function normalizeMissingPrefValue(rawValue, fallback = 'skip') {
         return 'skip'
     }
     return value
+}
+
+function normalizeMapperSortMethod(rawValue, fallback = defaultMapperSortMethod) {
+    let value = String(rawValue || fallback || defaultMapperSortMethod)
+    let allowed = ['canvas_recent_desc', 'canvas_name_asc', 'synergy_name_asc', 'synergy_order_ltr']
+    if (!allowed.includes(value)) {
+        return defaultMapperSortMethod
+    }
+    return value
+}
+
+function getMapperSortMethodLabel(sortMethod) {
+    switch (normalizeMapperSortMethod(sortMethod)) {
+        case 'canvas_name_asc':
+            return 'Canvas Assignment A-Z'
+        case 'synergy_name_asc':
+            return 'Synergy Assignment A-Z'
+        case 'synergy_order_ltr':
+            return 'Synergy Left-Right'
+        case 'canvas_recent_desc':
+        default:
+            return 'Most Recent First'
+    }
 }
 
 function getMissingPrefLabel(missingPref) {
@@ -334,6 +470,19 @@ function updateMapperSettingsUiFromState() {
 
     $('#bsd-round-up-from').val(roundUpFrom.toFixed(2))
     $('#bsd-missing-pref').val(missingPref)
+}
+
+function updateSortControlsFromState() {
+    mapperState.sortMethod = normalizeMapperSortMethod(mapperState.sortMethod, defaultMapperSortMethod)
+    $('#bsd-sort-method').val(mapperState.sortMethod)
+}
+
+function persistSortMethodFromUi() {
+    mapperState.sortMethod = normalizeMapperSortMethod($('#bsd-sort-method').val(), mapperState.sortMethod)
+    updateSortControlsFromState()
+    chrome.storage.local.set({
+        [mapperSortMethodStorageKey]: mapperState.sortMethod
+    })
 }
 
 function persistSettingsFromUi(showStatus = false) {
@@ -367,6 +516,241 @@ function queuePersistSettingsFromUi(showStatus = false) {
     }, 180)
 }
 
+function ensurePlainObject(value) {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+        return {}
+    }
+    return value
+}
+
+function isQuotaExceededError(error) {
+    let message = String(error && error.message ? error.message : error || '')
+    return message.toLowerCase().includes('quota')
+}
+
+function normalizeRubricAssessmentForCache(rawAssessment) {
+    if (!rawAssessment || typeof rawAssessment !== 'object') {
+        return null
+    }
+
+    let normalized = {}
+    Object.keys(rawAssessment).forEach((rubricId) => {
+        let criterion = rawAssessment[rubricId]
+        if (!criterion || typeof criterion !== 'object') {
+            return
+        }
+
+        if (Object.prototype.hasOwnProperty.call(criterion, 'points')) {
+            normalized[String(rubricId)] = {
+                points: criterion.points
+            }
+        } else {
+            normalized[String(rubricId)] = {}
+        }
+    })
+
+    return Object.keys(normalized).length > 0 ? normalized : null
+}
+
+function compactSubmissionForCache(submission) {
+    let row = submission && typeof submission === 'object' ? submission : {}
+    let compact = {
+        course_id: String(row.course_id || ''),
+        canvas_id: String(row.canvas_id || ''),
+        assign_id: String(row.assign_id || ''),
+        synergy_id: String(row.synergy_id || ''),
+        short_name: String(row.short_name || ''),
+        sortable_name: String(row.sortable_name || ''),
+        period: String(row.period || ''),
+        posted_at: row.posted_at ? String(row.posted_at) : '',
+        excused: Boolean(row.excused),
+        late: Boolean(row.late),
+        missing: Boolean(row.missing),
+        grading_per: row.grading_per == null ? null : row.grading_per
+    }
+
+    let rubric = normalizeRubricAssessmentForCache(row.rubric_assessment)
+    if (rubric) {
+        compact.rubric_assessment = rubric
+    }
+
+    return compact
+}
+
+function compactSubmissionsForCache(submissions) {
+    if (!Array.isArray(submissions)) {
+        return []
+    }
+    return submissions.map((submission) => compactSubmissionForCache(submission))
+}
+
+function getNormalizedSubmissionsByAssignmentForAssignments(assignments, source) {
+    let list = Array.isArray(assignments) ? assignments : []
+    let from = ensurePlainObject(source)
+    let normalized = {}
+
+    list.forEach((assignment) => {
+        let assignmentId = String(assignment && assignment.id ? assignment.id : '')
+        if (!assignmentId) {
+            return
+        }
+        if (Object.prototype.hasOwnProperty.call(from, assignmentId) && Array.isArray(from[assignmentId])) {
+            normalized[assignmentId] = compactSubmissionsForCache(from[assignmentId])
+        }
+    })
+
+    return normalized
+}
+
+function getNormalizedSubmissionSyncForAssignments(assignments, source) {
+    let list = Array.isArray(assignments) ? assignments : []
+    let from = ensurePlainObject(source)
+    let normalized = {}
+
+    list.forEach((assignment) => {
+        let assignmentId = String(assignment && assignment.id ? assignment.id : '')
+        if (!assignmentId) {
+            return
+        }
+        if (Object.prototype.hasOwnProperty.call(from, assignmentId)) {
+            normalized[assignmentId] = String(from[assignmentId] || '')
+        }
+    })
+
+    return normalized
+}
+
+function getAssignmentUpdatedAtMap(assignments) {
+    let list = Array.isArray(assignments) ? assignments : []
+    let map = {}
+    list.forEach((assignment) => {
+        let assignmentId = String(assignment && assignment.id ? assignment.id : '')
+        if (!assignmentId) {
+            return
+        }
+        map[assignmentId] = String(assignment && assignment.updated_at ? assignment.updated_at : '')
+    })
+    return map
+}
+
+function getFirstSubmissionsForAssignments(assignments, submissionsByAssignment) {
+    let list = Array.isArray(assignments) ? assignments : []
+    let byAssignment = ensurePlainObject(submissionsByAssignment)
+    let firstAssignmentId = list.length > 0 ? String(list[0].id || '') : ''
+    return firstAssignmentId ? (Array.isArray(byAssignment[firstAssignmentId]) ? byAssignment[firstAssignmentId] : []) : []
+}
+
+function getCourseAssignmentsFromCache(courseId) {
+    let safeCourseId = String(courseId || '')
+    if (!safeCourseId) {
+        return []
+    }
+    let assignments = mapperState.canvasAssignmentsByCourse[safeCourseId]
+    return Array.isArray(assignments) ? assignments : []
+}
+
+function getCourseSubmissionsByAssignmentFromCache(courseId, assignments = null) {
+    let safeCourseId = String(courseId || '')
+    if (!safeCourseId) {
+        return {}
+    }
+
+    let byCourse = ensurePlainObject(mapperState.submissionsByAssignmentByCourse)
+    let source = ensurePlainObject(byCourse[safeCourseId])
+    let targetAssignments = Array.isArray(assignments) ? assignments : getCourseAssignmentsFromCache(safeCourseId)
+    return getNormalizedSubmissionsByAssignmentForAssignments(targetAssignments, source)
+}
+
+function getCourseSubmissionSyncMapFromCache(courseId, assignments = null) {
+    let safeCourseId = String(courseId || '')
+    if (!safeCourseId) {
+        return {}
+    }
+
+    let byCourse = ensurePlainObject(mapperState.canvasSubmissionSyncByCourse)
+    let source = ensurePlainObject(byCourse[safeCourseId])
+    let targetAssignments = Array.isArray(assignments) ? assignments : getCourseAssignmentsFromCache(safeCourseId)
+    return getNormalizedSubmissionSyncForAssignments(targetAssignments, source)
+}
+
+function setActiveCourseDataFromCache(courseId) {
+    let safeCourseId = String(courseId || '')
+    let assignments = getCourseAssignmentsFromCache(safeCourseId)
+    let submissionsByAssignment = getCourseSubmissionsByAssignmentFromCache(safeCourseId, assignments)
+
+    mapperState.selectedCanvasCourseId = safeCourseId
+    mapperState.assignments = assignments
+    mapperState.submissionsByAssignment = submissionsByAssignment
+}
+
+async function persistCanvasCourseCaches(courseId, assignments, submissionsByAssignment, syncMapByAssignment, baseUrl = '') {
+    canvasCacheTrimmedForQuota = false
+    let safeCourseId = String(courseId || '')
+    let safeAssignments = Array.isArray(assignments) ? assignments : []
+    let safeSubmissions = getNormalizedSubmissionsByAssignmentForAssignments(safeAssignments, submissionsByAssignment)
+    let safeSyncMap = getNormalizedSubmissionSyncForAssignments(safeAssignments, syncMapByAssignment)
+
+    mapperState.canvasAssignmentsByCourse = ensurePlainObject(mapperState.canvasAssignmentsByCourse)
+    mapperState.submissionsByAssignmentByCourse = ensurePlainObject(mapperState.submissionsByAssignmentByCourse)
+    mapperState.canvasSubmissionSyncByCourse = ensurePlainObject(mapperState.canvasSubmissionSyncByCourse)
+
+    if (safeCourseId) {
+        mapperState.canvasAssignmentsByCourse[safeCourseId] = safeAssignments
+        mapperState.submissionsByAssignmentByCourse[safeCourseId] = safeSubmissions
+        mapperState.canvasSubmissionSyncByCourse[safeCourseId] = safeSyncMap
+    }
+
+    setActiveCourseDataFromCache(mapperState.selectedCanvasCourseId || safeCourseId)
+
+    let activeCourseId = String(mapperState.selectedCanvasCourseId || safeCourseId || '')
+    let activeAssignments = getCourseAssignmentsFromCache(activeCourseId)
+    let activeSubmissionsByAssignment = getCourseSubmissionsByAssignmentFromCache(activeCourseId, activeAssignments)
+    let firstSubmissions = getFirstSubmissionsForAssignments(activeAssignments, activeSubmissionsByAssignment)
+    let payload = {
+        [canvasAssignmentsByCourseStorageKey]: mapperState.canvasAssignmentsByCourse,
+        [submissionsByAssignmentByCourseStorageKey]: mapperState.submissionsByAssignmentByCourse,
+        [canvasSubmissionSyncByCourseStorageKey]: mapperState.canvasSubmissionSyncByCourse,
+        assignments: activeAssignments,
+        submissionsByAssignment: activeSubmissionsByAssignment,
+        submissions: firstSubmissions,
+        canvasCourseId: activeCourseId,
+        canvasBaseUrl: String(baseUrl || mapperState.canvasBaseUrl || '')
+    }
+
+    try {
+        await chrome.storage.local.set(payload)
+        return
+    } catch (e) {
+        if (!isQuotaExceededError(e)) {
+            throw e
+        }
+    }
+
+    // Quota fallback: keep cache only for the active course and retry.
+    canvasCacheTrimmedForQuota = true
+    let keepCourseId = activeCourseId
+    let keepAssignments = getCourseAssignmentsFromCache(keepCourseId)
+    let keepSubmissions = getCourseSubmissionsByAssignmentFromCache(keepCourseId, keepAssignments)
+    let keepSyncMap = getCourseSubmissionSyncMapFromCache(keepCourseId, keepAssignments)
+
+    mapperState.canvasAssignmentsByCourse = keepCourseId ? { [keepCourseId]: keepAssignments } : {}
+    mapperState.submissionsByAssignmentByCourse = keepCourseId ? { [keepCourseId]: keepSubmissions } : {}
+    mapperState.canvasSubmissionSyncByCourse = keepCourseId ? { [keepCourseId]: keepSyncMap } : {}
+    setActiveCourseDataFromCache(keepCourseId)
+
+    let retryPayload = {
+        [canvasAssignmentsByCourseStorageKey]: mapperState.canvasAssignmentsByCourse,
+        [submissionsByAssignmentByCourseStorageKey]: mapperState.submissionsByAssignmentByCourse,
+        [canvasSubmissionSyncByCourseStorageKey]: mapperState.canvasSubmissionSyncByCourse,
+        assignments: mapperState.assignments,
+        submissionsByAssignment: mapperState.submissionsByAssignment,
+        submissions: getFirstSubmissionsForAssignments(mapperState.assignments, mapperState.submissionsByAssignment),
+        canvasCourseId: keepCourseId,
+        canvasBaseUrl: String(baseUrl || mapperState.canvasBaseUrl || '')
+    }
+    await chrome.storage.local.set(retryPayload)
+}
+
 async function loadMapperStateFromStorage() {
     let local = await chrome.storage.local.get([
         'assignments',
@@ -375,6 +759,10 @@ async function loadMapperStateFromStorage() {
         'canvasBaseUrl',
         'canvasCourseId',
         synergyCanvasMatchStorageKey,
+        canvasAssignmentsByCourseStorageKey,
+        submissionsByAssignmentByCourseStorageKey,
+        canvasSubmissionSyncByCourseStorageKey,
+        mapperSortMethodStorageKey,
         mapperStorageKey
     ])
     let sync = await chrome.storage.sync.get({
@@ -382,26 +770,60 @@ async function loadMapperStateFromStorage() {
         missingPref: 'skip'
     })
 
-    mapperState.assignments = local.assignments || []
-    mapperState.submissionsByAssignment = local.submissionsByAssignment || {}
-    if (Object.keys(mapperState.submissionsByAssignment).length === 0 && Array.isArray(local.submissions) && local.submissions.length > 0) {
-        let fallbackAssignId = String(local.submissions[0].assign_id)
-        mapperState.submissionsByAssignment[fallbackAssignId] = local.submissions
-    }
-
     mapperState.roundUpFrom = normalizeRoundUpFromValue(sync.roundUpFrom, 0.5)
     mapperState.missingPref = normalizeMissingPrefValue(sync.missingPref, 'skip')
+    mapperState.sortMethod = normalizeMapperSortMethod(local[mapperSortMethodStorageKey], defaultMapperSortMethod)
     mapperState.mappings = Array.isArray(local[mapperStorageKey]) ? local[mapperStorageKey] : []
     mapperState.canvasBaseUrl = String(local.canvasBaseUrl || '')
     mapperState.selectedCanvasCourseId = String(local.canvasCourseId || '')
     mapperState.canvasIncludeConcludedCourses = false
+    mapperState.canvasAssignmentsByCourse = ensurePlainObject(local[canvasAssignmentsByCourseStorageKey])
+    mapperState.submissionsByAssignmentByCourse = ensurePlainObject(local[submissionsByAssignmentByCourseStorageKey])
+    mapperState.canvasSubmissionSyncByCourse = ensurePlainObject(local[canvasSubmissionSyncByCourseStorageKey])
     mapperState.synergyCanvasCourseMatches =
         local[synergyCanvasMatchStorageKey] && typeof local[synergyCanvasMatchStorageKey] === 'object'
             ? local[synergyCanvasMatchStorageKey]
             : {}
 
-    if (mapperState.selectedCanvasCourseId && Array.isArray(mapperState.assignments) && mapperState.assignments.length > 0) {
-        mapperState.canvasAssignmentsByCourse[mapperState.selectedCanvasCourseId] = mapperState.assignments
+    let legacyAssignments = Array.isArray(local.assignments) ? local.assignments : []
+    let legacySubmissionsByAssignment = ensurePlainObject(local.submissionsByAssignment)
+    if (Object.keys(legacySubmissionsByAssignment).length === 0 && Array.isArray(local.submissions) && local.submissions.length > 0) {
+        let fallbackAssignId = String(local.submissions[0].assign_id || '')
+        if (fallbackAssignId) {
+            legacySubmissionsByAssignment[fallbackAssignId] = local.submissions
+        }
+    }
+
+    let selectedCourseId = mapperState.selectedCanvasCourseId
+    if (selectedCourseId) {
+        if (!Array.isArray(mapperState.canvasAssignmentsByCourse[selectedCourseId]) && legacyAssignments.length > 0) {
+            mapperState.canvasAssignmentsByCourse[selectedCourseId] = legacyAssignments
+        }
+
+        let selectedAssignments = getCourseAssignmentsFromCache(selectedCourseId)
+        let existingCourseSubmissions = ensurePlainObject(mapperState.submissionsByAssignmentByCourse[selectedCourseId])
+        if (Object.keys(existingCourseSubmissions).length === 0 && Object.keys(legacySubmissionsByAssignment).length > 0) {
+            mapperState.submissionsByAssignmentByCourse[selectedCourseId] =
+                getNormalizedSubmissionsByAssignmentForAssignments(selectedAssignments, legacySubmissionsByAssignment)
+        } else {
+            mapperState.submissionsByAssignmentByCourse[selectedCourseId] =
+                getNormalizedSubmissionsByAssignmentForAssignments(selectedAssignments, existingCourseSubmissions)
+        }
+
+        let existingSyncMap = ensurePlainObject(mapperState.canvasSubmissionSyncByCourse[selectedCourseId])
+        if (Object.keys(existingSyncMap).length === 0) {
+            mapperState.canvasSubmissionSyncByCourse[selectedCourseId] = {}
+        } else {
+            mapperState.canvasSubmissionSyncByCourse[selectedCourseId] =
+                getNormalizedSubmissionSyncForAssignments(selectedAssignments, existingSyncMap)
+        }
+    }
+
+    setActiveCourseDataFromCache(selectedCourseId)
+    if ((!selectedCourseId || mapperState.assignments.length === 0) && legacyAssignments.length > 0) {
+        mapperState.assignments = legacyAssignments
+        mapperState.submissionsByAssignment =
+            getNormalizedSubmissionsByAssignmentForAssignments(legacyAssignments, legacySubmissionsByAssignment)
     }
 
     updateMapperReadyUi()
@@ -417,6 +839,54 @@ function setCanvasFetchStatus(text, isError = false) {
     $('#bsd-canvas-fetch-status')
         .css('color', isError ? '#f9b1b1' : '#b4f7fe')
         .text(text)
+}
+
+function clearCanvasFetchProgress() {
+    canvasFetchProgressState = {
+        total: 0,
+        fetched: 0,
+        active: 0
+    }
+    $('#bsd-canvas-fetch-progress-fetched').css({ width: '0%' })
+    $('#bsd-canvas-fetch-progress-active').css({ left: '0%', width: '0%' })
+    $('#bsd-canvas-fetch-progress-label').text('')
+    $('#bsd-canvas-fetch-progress').addClass('bsd-hidden')
+}
+
+function setCanvasFetchProgress(total, fetched = 0, active = 0, label = '') {
+    let safeTotal = Math.max(0, Number(total) || 0)
+    if (safeTotal <= 0) {
+        clearCanvasFetchProgress()
+        return
+    }
+
+    let safeFetched = Math.max(0, Math.min(safeTotal, Number(fetched) || 0))
+    let safeActive = Math.max(0, Math.min(safeTotal - safeFetched, Number(active) || 0))
+    let safeRemaining = Math.max(0, safeTotal - safeFetched - safeActive)
+
+    let fetchedPct = (safeFetched / safeTotal) * 100
+    let activePct = (safeActive / safeTotal) * 100
+    let activeLeftPct = fetchedPct
+
+    canvasFetchProgressState = {
+        total: safeTotal,
+        fetched: safeFetched,
+        active: safeActive
+    }
+
+    let defaultLabel = `${safeFetched}/${safeTotal} fetched`
+    if (safeActive > 0) {
+        defaultLabel += `, ${safeActive} in progress`
+    }
+    defaultLabel += `, ${safeRemaining} remaining`
+
+    $('#bsd-canvas-fetch-progress-fetched').css({ width: `${fetchedPct}%` })
+    $('#bsd-canvas-fetch-progress-active').css({
+        left: `${activeLeftPct}%`,
+        width: `${activePct}%`
+    })
+    $('#bsd-canvas-fetch-progress-label').text(String(label || defaultLabel))
+    $('#bsd-canvas-fetch-progress').removeClass('bsd-hidden')
 }
 
 function isAbortError(error) {
@@ -473,6 +943,11 @@ function stopCanvasFetch() {
 function beginCanvasFetch(statusText = '', statusChannel = 'course') {
     canvasFetchController = new AbortController()
     setCanvasControlsDisabled(true)
+    if (statusChannel === 'fetch') {
+        clearCanvasFetchProgress()
+    } else {
+        clearCanvasFetchProgress()
+    }
     if (statusText) {
         if (statusChannel === 'fetch') {
             setCanvasFetchStatus(statusText)
@@ -486,6 +961,9 @@ function beginCanvasFetch(statusText = '', statusChannel = 'course') {
 function endCanvasFetch(statusText = '', isError = false, statusChannel = 'course') {
     canvasFetchController = null
     setCanvasControlsDisabled(false)
+    if (statusChannel !== 'fetch') {
+        clearCanvasFetchProgress()
+    }
     if (statusText) {
         if (statusChannel === 'fetch') {
             setCanvasFetchStatus(statusText, isError)
@@ -1027,13 +1505,16 @@ async function fetchCanvasStudentsForCourse(courseId, baseUrl) {
     return students
 }
 
-async function fetchCanvasSubmissionsForAssignment(courseId, assignment, students, baseUrl) {
+async function fetchCanvasSubmissionsForAssignment(courseId, assignment, students, baseUrl, options = {}) {
+    let showStatus = options.showStatus !== false
     let page = 1
     let perPage = 50
     let submissions = []
 
     while (true) {
-        setCanvasFetchStatus(`Fetching submissions: ${assignment.name} (page ${page})...`)
+        if (showStatus) {
+            setCanvasFetchStatus(`Fetching submissions: ${assignment.name} (page ${page})...`)
+        }
         let data = await fetchCanvasJson(
             baseUrl,
             `/api/v1/courses/${courseId}/assignments/${assignment.id}/submissions?include[]=rubric_assessment&per_page=${perPage}&page=${page}`
@@ -1048,20 +1529,16 @@ async function fetchCanvasSubmissionsForAssignment(courseId, assignment, student
                 course_id: String(courseId),
                 canvas_id: String(item && item.user_id ? item.user_id : ''),
                 assign_id: String(assignment.id),
-                assign_name: String(assignment.name || ''),
                 posted_at: item ? item.posted_at : null,
-                entered_score: item ? item.entered_score : null,
                 excused: Boolean(item && item.excused),
                 late: Boolean(item && item.late),
                 missing: Boolean(item && item.missing),
-                grading_per: item ? item.grading_period_id : null,
-                full_object: item
+                grading_per: item ? item.grading_period_id : null
             }
 
-            if (item && item.rubric_assessment && typeof item.rubric_assessment === 'object') {
-                row.rubric_assessment = item.rubric_assessment
-            } else {
-                row.score = ''
+            let rubricAssessment = normalizeRubricAssessmentForCache(item ? item.rubric_assessment : null)
+            if (rubricAssessment) {
+                row.rubric_assessment = rubricAssessment
             }
 
             submissions.push(row)
@@ -1073,17 +1550,25 @@ async function fetchCanvasSubmissionsForAssignment(courseId, assignment, student
         page += 1
     }
 
-    return addSynergyIdsToSubmissions(submissions, students)
+    let result = addSynergyIdsToSubmissions(submissions, students)
+    return {
+        submissions: compactSubmissionsForCache(result.submissions),
+        unmatchedCount: result.unmatchedCount
+    }
 }
 
-async function loadCanvasCourses(forceFromTabs = false) {
+async function loadCanvasCourses(forceFromTabs = false, options = {}) {
     if (canvasFetchInFlight) {
         return
     }
 
     beginCanvasFetch('Connecting to Canvas...', 'course')
     try {
+        let resetSelectedCourse = Boolean(options && options.resetSelectedCourse === true)
         let previousSelectedCourseId = String(mapperState.selectedCanvasCourseId || '')
+        if (resetSelectedCourse) {
+            mapperState.selectedCanvasCourseId = ''
+        }
         let includeConcluded = Boolean($('#bsd-canvas-include-concluded').prop('checked') || mapperState.canvasIncludeConcludedCourses)
         mapperState.canvasIncludeConcludedCourses = includeConcluded
 
@@ -1217,25 +1702,23 @@ async function loadCanvasAssignmentsForSelectedCourse(options = {}) {
 
     try {
         let baseUrl = await ensureCanvasBaseUrl(false)
-        let assignments = mapperState.canvasAssignmentsByCourse[selectedCourseId]
+        let assignments = getCourseAssignmentsFromCache(selectedCourseId)
         if (forceRefresh || !Array.isArray(assignments) || assignments.length === 0) {
             assignments = await fetchCanvasAssignmentsForCourse(selectedCourseId, baseUrl)
         }
         assignments = Array.isArray(assignments) ? assignments : []
-        mapperState.canvasAssignmentsByCourse[selectedCourseId] = assignments
-
-        await chrome.storage.local.set({
-            assignments: assignments,
-            canvasCourseId: selectedCourseId,
-            canvasBaseUrl: baseUrl
-        })
+        let submissionsByAssignment = getCourseSubmissionsByAssignmentFromCache(selectedCourseId, assignments)
+        let submissionSyncMap = getCourseSubmissionSyncMapFromCache(selectedCourseId, assignments)
+        await persistCanvasCourseCaches(selectedCourseId, assignments, submissionsByAssignment, submissionSyncMap, baseUrl)
 
         await loadMapperStateFromStorage()
-        mapperState.canvasAssignmentsByCourse[selectedCourseId] = assignments
         renderCanvasAssignmentSummary()
         updateCanvasActionButtons()
 
         let loadedText = `Loaded ${assignments.length} assignment(s). Click "Fetch Canvas Scores" to pull submissions.`
+        if (canvasCacheTrimmedForQuota) {
+            loadedText += ' Cache trimmed to current course due to storage limits.'
+        }
         if (manageLoading) {
             endCanvasFetch(loadedText, false, 'course')
         } else {
@@ -1297,30 +1780,22 @@ async function fetchAllCanvasDataForCourse(courseId, options = {}) {
     }
 
     try {
-        let assignments = mapperState.canvasAssignmentsByCourse[selectedCourseId]
-        if (forceAssignmentsRefresh || !Array.isArray(assignments) || assignments.length === 0) {
-            await loadCanvasAssignmentsForSelectedCourse({
-                courseId: selectedCourseId,
-                manageLoading: false,
-                forceRefresh: forceAssignmentsRefresh,
-                throwOnError: true
-            })
-            assignments = mapperState.canvasAssignmentsByCourse[selectedCourseId] || []
-        }
-        assignments = Array.isArray(assignments) ? assignments : []
-        mapperState.canvasAssignmentsByCourse[selectedCourseId] = assignments
+        await loadCanvasAssignmentsForSelectedCourse({
+            courseId: selectedCourseId,
+            manageLoading: false,
+            // Refresh assignment metadata every fetch so updated_at comparison stays current.
+            forceRefresh: true,
+            throwOnError: true
+        })
 
-        renderCanvasAssignmentSummary()
+        let assignments = getCourseAssignmentsFromCache(selectedCourseId)
+        assignments = Array.isArray(assignments) ? assignments : []
+        let cachedSubmissionsByAssignment = getCourseSubmissionsByAssignmentFromCache(selectedCourseId, assignments)
+        let cachedSubmissionSyncMap = getCourseSubmissionSyncMapFromCache(selectedCourseId, assignments)
 
         if (assignments.length === 0) {
-            await chrome.storage.local.set({
-                assignments: [],
-                submissionsByAssignment: {},
-                submissions: [],
-                canvasCourseId: selectedCourseId,
-                canvasBaseUrl: mapperState.canvasBaseUrl
-            })
-
+            clearCanvasFetchProgress()
+            await persistCanvasCourseCaches(selectedCourseId, [], {}, {}, mapperState.canvasBaseUrl)
             await loadMapperStateFromStorage()
             renderCanvasAssignmentSummary()
             let emptyMessage = 'No rubric-enabled published assignments found in selected course.'
@@ -1335,39 +1810,150 @@ async function fetchAllCanvasDataForCourse(courseId, options = {}) {
             }
         }
 
-        let baseUrl = await ensureCanvasBaseUrl(false)
-        setCanvasFetchStatus(`Fetching student roster for ${assignments.length} assignment(s)...`)
-        let students = await fetchCanvasStudentsForCourse(selectedCourseId, baseUrl)
-
-        let submissionsByAssignment = {}
-        let unmatchedCount = 0
-        for (let i = 0; i < assignments.length; i++) {
-            let assignment = assignments[i]
-            setCanvasFetchStatus(`Fetching submissions ${i + 1}/${assignments.length}: ${assignment.name}`)
-            let result = await fetchCanvasSubmissionsForAssignment(selectedCourseId, assignment, students, baseUrl)
-            submissionsByAssignment[String(assignment.id)] = result.submissions
-            unmatchedCount += result.unmatchedCount
-        }
-
-        let firstAssignmentId = assignments.length > 0 ? String(assignments[0].id) : ''
-        let firstSubmissions = firstAssignmentId ? (submissionsByAssignment[firstAssignmentId] || []) : []
-
-        await chrome.storage.local.set({
-            assignments: assignments,
-            submissionsByAssignment: submissionsByAssignment,
-            submissions: firstSubmissions,
-            canvasCourseId: selectedCourseId,
-            canvasBaseUrl: baseUrl
+        let assignmentUpdatedAtMap = getAssignmentUpdatedAtMap(assignments)
+        let assignmentsToFetch = []
+        assignments.forEach((assignment) => {
+            let assignmentId = String(assignment && assignment.id ? assignment.id : '')
+            if (!assignmentId) {
+                return
+            }
+            let hasSyncToken = Object.prototype.hasOwnProperty.call(cachedSubmissionSyncMap, assignmentId)
+            let lastSyncedUpdatedAt = String(cachedSubmissionSyncMap[assignmentId] || '')
+            let latestUpdatedAt = String(assignmentUpdatedAtMap[assignmentId] || '')
+            let needsFetch = forceAssignmentsRefresh || !hasSyncToken || lastSyncedUpdatedAt !== latestUpdatedAt
+            if (needsFetch) {
+                assignmentsToFetch.push(assignment)
+            }
         })
 
+        let totalAssignmentsCount = assignments.length
+        let cachedAssignmentsCount = Math.max(0, totalAssignmentsCount - assignmentsToFetch.length)
+        setCanvasFetchProgress(
+            totalAssignmentsCount,
+            cachedAssignmentsCount,
+            0,
+            `Ready: ${cachedAssignmentsCount}/${totalAssignmentsCount} cached, ${assignmentsToFetch.length} to fetch`
+        )
+
+        let submissionsByAssignment = { ...cachedSubmissionsByAssignment }
+        let submissionSyncMap = { ...cachedSubmissionSyncMap }
+        let unmatchedCount = 0
+        let baseUrl = String(mapperState.canvasBaseUrl || '')
+
+        if (assignmentsToFetch.length > 0) {
+            baseUrl = await ensureCanvasBaseUrl(false)
+            setCanvasFetchStatus(`Fetching student roster for ${assignmentsToFetch.length} updated assignment(s)...`)
+            setCanvasFetchProgress(
+                totalAssignmentsCount,
+                cachedAssignmentsCount,
+                0,
+                `Preparing roster for ${assignmentsToFetch.length} updated assignment(s)`
+            )
+            let students = await fetchCanvasStudentsForCourse(selectedCourseId, baseUrl)
+            let workerCount = Math.max(1, Math.min(canvasSubmissionsFetchConcurrency, assignmentsToFetch.length))
+            let nextFetchIndex = 0
+            let startedFetches = 0
+            let completedFetches = 0
+            let activeFetches = 0
+            let fetchError = null
+
+            function updateParallelFetchProgress(activeAssignmentName = '') {
+                let fetchedOverall = cachedAssignmentsCount + completedFetches
+                let remaining = Math.max(0, totalAssignmentsCount - fetchedOverall - activeFetches)
+                let label = `${fetchedOverall}/${totalAssignmentsCount} fetched, ${activeFetches} in progress, ${remaining} remaining`
+                if (activeFetches > 0 && activeAssignmentName) {
+                    label = `Fetching ${Math.min(totalAssignmentsCount, fetchedOverall + 1)}/${totalAssignmentsCount}: ${activeAssignmentName}`
+                }
+                setCanvasFetchProgress(totalAssignmentsCount, fetchedOverall, activeFetches, label)
+            }
+
+            async function fetchAssignmentWorker() {
+                while (nextFetchIndex < assignmentsToFetch.length) {
+                    if (fetchError) {
+                        return
+                    }
+
+                    let queueIndex = nextFetchIndex
+                    nextFetchIndex += 1
+
+                    let assignment = assignmentsToFetch[queueIndex]
+                    let assignmentId = String(assignment && assignment.id ? assignment.id : '')
+                    if (!assignmentId) {
+                        continue
+                    }
+
+                    startedFetches += 1
+                    activeFetches += 1
+                    let startedOverall = cachedAssignmentsCount + startedFetches
+                    setCanvasFetchStatus(`Fetching ${startedOverall}/${totalAssignmentsCount}: ${assignment.name}`)
+                    updateParallelFetchProgress(assignment.name)
+
+                    try {
+                        let result = await fetchCanvasSubmissionsForAssignment(selectedCourseId, assignment, students, baseUrl, {
+                            showStatus: false
+                        })
+                        submissionsByAssignment[assignmentId] = result.submissions
+                        submissionSyncMap[assignmentId] = String(assignment && assignment.updated_at ? assignment.updated_at : '')
+                        unmatchedCount += result.unmatchedCount
+                    } catch (e) {
+                        fetchError = e
+                        throw e
+                    } finally {
+                        activeFetches = Math.max(0, activeFetches - 1)
+                        completedFetches += 1
+                        updateParallelFetchProgress()
+                    }
+                }
+            }
+
+            await Promise.all(Array.from({ length: workerCount }, () => fetchAssignmentWorker()))
+            if (fetchError) {
+                throw fetchError
+            }
+        } else {
+            setCanvasFetchStatus(`No assignment updates detected; using cached submissions for ${assignments.length} assignment(s).`)
+            setCanvasFetchProgress(
+                totalAssignmentsCount,
+                totalAssignmentsCount,
+                0,
+                `No assignment updates detected; using cached submissions for ${totalAssignmentsCount} assignment(s).`
+            )
+        }
+
+        assignments.forEach((assignment) => {
+            let assignmentId = String(assignment && assignment.id ? assignment.id : '')
+            if (!assignmentId) {
+                return
+            }
+            if (!Object.prototype.hasOwnProperty.call(submissionSyncMap, assignmentId)) {
+                submissionSyncMap[assignmentId] = String(assignment && assignment.updated_at ? assignment.updated_at : '')
+            }
+        })
+
+        await persistCanvasCourseCaches(selectedCourseId, assignments, submissionsByAssignment, submissionSyncMap, baseUrl)
         await loadMapperStateFromStorage()
-        mapperState.canvasAssignmentsByCourse[selectedCourseId] = assignments
         renderCanvasAssignmentSummary()
 
         if (unmatchedCount > 0) {
             console.log(`Ignored ${unmatchedCount} Canvas submissions that did not map to fetched course students.`)
         }
+        let fetchedAssignmentsCount = assignmentsToFetch.length
+        let reusedAssignmentsCount = Math.max(0, assignments.length - fetchedAssignmentsCount)
         let doneMessage = `Fetched ${assignments.length} assignment(s) for selected course.`
+        if (fetchedAssignmentsCount === 0) {
+            doneMessage = `No assignment updates detected. Reused cached submissions for ${reusedAssignmentsCount} assignment(s).`
+        } else if (reusedAssignmentsCount > 0) {
+            doneMessage = `Fetched ${fetchedAssignmentsCount} updated assignment(s); reused cached submissions for ${reusedAssignmentsCount}.`
+        }
+        if (canvasCacheTrimmedForQuota) {
+            doneMessage += ' Cache trimmed to current course due to storage limits.'
+        }
+        setCanvasFetchProgress(
+            totalAssignmentsCount,
+            totalAssignmentsCount,
+            0,
+            doneMessage
+        )
         if (manageLoading) {
             endCanvasFetch(doneMessage, false, 'fetch')
         } else {
@@ -1376,7 +1962,9 @@ async function fetchAllCanvasDataForCourse(courseId, options = {}) {
 
         return {
             assignmentsCount: assignments.length,
-            unmatchedCount: unmatchedCount
+            unmatchedCount: unmatchedCount,
+            fetchedAssignmentsCount: fetchedAssignmentsCount,
+            reusedAssignmentsCount: reusedAssignmentsCount
         }
     } catch (e) {
         renderCanvasAssignmentSummary()
@@ -1400,17 +1988,16 @@ async function fetchAllCanvasDataForCourse(courseId, options = {}) {
 async function clearMapperDataForCourseChange(selectedCourseId) {
     let safeCourseId = String(selectedCourseId || '')
 
-    mapperState.selectedCanvasCourseId = safeCourseId
-    mapperState.assignments = []
-    mapperState.submissionsByAssignment = {}
+    setActiveCourseDataFromCache(safeCourseId)
     mapperState.mappings = []
 
+    let firstSubmissions = getFirstSubmissionsForAssignments(mapperState.assignments, mapperState.submissionsByAssignment)
     suppressNextMappingsRefresh = true
     await chrome.storage.local.set({
         canvasCourseId: safeCourseId,
-        assignments: [],
-        submissionsByAssignment: {},
-        submissions: [],
+        assignments: mapperState.assignments,
+        submissionsByAssignment: mapperState.submissionsByAssignment,
+        submissions: firstSubmissions,
         [mapperStorageKey]: []
     })
 
@@ -1458,6 +2045,59 @@ function normalizeHeaderText(text) {
         .replace(/\s+/g, ' ')
         .replace(/[|]+/g, ' ')
         .trim()
+}
+
+function stripHtmlToText(text) {
+    if (!text) {
+        return ''
+    }
+
+    let raw = String(text)
+    if (!/[<&]/.test(raw)) {
+        return normalizeHeaderText(raw)
+    }
+
+    let temp = document.createElement('div')
+    temp.innerHTML = raw
+    return normalizeHeaderText(temp.textContent || temp.innerText || '')
+}
+
+function truncateText(text, maxLength = 96) {
+    let clean = normalizeHeaderText(text)
+    if (!clean) {
+        return ''
+    }
+    if (clean.length <= maxLength) {
+        return clean
+    }
+    return `${clean.slice(0, Math.max(0, maxLength - 1)).trimEnd()}...`
+}
+
+function getRubricDisplayParts(rubric) {
+    let code = normalizeHeaderText(rubric && rubric.alt_code ? rubric.alt_code : '')
+    let detail = stripHtmlToText(rubric && rubric.alt_text ? rubric.alt_text : '')
+    return { code, detail }
+}
+
+function getRubricMatchText(rubric) {
+    let parts = getRubricDisplayParts(rubric)
+    return normalizeHeaderText(`${parts.code} ${parts.detail}`.trim())
+}
+
+function getRubricOptionLabel(rubric) {
+    let parts = getRubricDisplayParts(rubric)
+    let detail = truncateText(parts.detail, 48)
+
+    if (parts.code && detail) {
+        return `${parts.code} - ${detail}`
+    }
+    if (parts.code) {
+        return parts.code
+    }
+    if (detail) {
+        return detail
+    }
+    return `Rubric ${String(rubric && rubric.id ? rubric.id : '').trim() || '?'}`
 }
 
 function cleanSynergyAssignmentLabel(text) {
@@ -1720,7 +2360,7 @@ function findBestAltMatch(targetAlt, rubrics, threshold = altMatchThreshold) {
     let best = null
     let bestScore = -1
     rubrics.forEach((rubric) => {
-        let rubricText = `${rubric.alt_code || ''} ${rubric.alt_text || ''}`.trim()
+        let rubricText = getRubricMatchText(rubric)
         let score = altSimilarityScore(targetAlt, rubricText)
         if (score > bestScore) {
             best = rubric
@@ -1910,6 +2550,7 @@ function updateMapperReadyUi() {
     let ready = hasSelectedCanvasCourse() && hasFetchedSubmissionsReady()
     $('.bsd-panel-settings').toggleClass('bsd-no-submissions', !ready)
     $('.bsd-add-assignment-row').toggleClass('bsd-no-submissions', !ready)
+    $('.bsd-sort-controls').toggleClass('bsd-no-submissions', !ready)
     $('.bsd-controls').toggleClass('bsd-no-submissions', !ready)
     $('#bsd-map-cards').toggleClass('bsd-no-submissions', !ready)
     updateCourseStepUi()
@@ -2002,11 +2643,25 @@ function buildCanvasAltOptions(selectEl, assignmentId, selectedRubricId) {
         return
     }
 
-    let rubrics = getRubrics(assignment)
-    rubrics.forEach((rubric) => {
+    let rubricOptions = getRubrics(assignment)
+        .map((rubric) => ({
+            rubric,
+            optionLabel: getRubricOptionLabel(rubric),
+            optionTitle: getRubricMatchText(rubric)
+        }))
+        .sort((left, right) => {
+            let labelCompare = left.optionLabel.localeCompare(right.optionLabel, undefined, { sensitivity: 'base', numeric: true })
+            if (labelCompare !== 0) {
+                return labelCompare
+            }
+            return String(left.rubric.id || '').localeCompare(String(right.rubric.id || ''), undefined, { numeric: true })
+        })
+
+    rubricOptions.forEach(({ rubric, optionLabel, optionTitle }) => {
         let option = $('<option></option>')
             .attr('value', String(rubric.id))
-            .text(`${rubric.alt_code}${rubric.alt_text ? ` - ${rubric.alt_text}` : ''}`)
+            .attr('title', optionTitle)
+            .text(optionLabel)
         if (String(selectedRubricId) === String(rubric.id)) {
             option.attr('selected', true)
         }
@@ -2043,37 +2698,131 @@ function getCardLastUpdatedTimestamp(card) {
     return Number.isNaN(parsed) ? -1 : parsed
 }
 
-function sortMapperCardsByMostRecentUpdate() {
-    let container = $('#bsd-map-cards')
-    let cards = container.children('.bsd-map-card').get()
-    if (cards.length <= 1) {
-        return
+function compareTextAsc(left, right) {
+    return String(left || '').localeCompare(String(right || ''), undefined, {
+        numeric: true,
+        sensitivity: 'base'
+    })
+}
+
+function getCardSortStableId(card) {
+    return Number(card.attr('data-card-id') || 0)
+}
+
+function getCardCanvasAssignmentName(card) {
+    let assignmentId = getCardCanvasAssignment(card)
+    if (assignmentId) {
+        let assignment = getAssignmentById(mapperState.assignments, assignmentId)
+        if (assignment && assignment.name) {
+            return normalizeHeaderText(assignment.name)
+        }
     }
 
-    cards.sort((a, b) => {
-        let aCard = $(a)
-        let bCard = $(b)
+    let selectedLabel = normalizeHeaderText(card.find('.bsd-card-canvas-assign-select option:selected').text())
+    if (selectedLabel.toLowerCase() === 'choose canvas assignment') {
+        return ''
+    }
+    return selectedLabel
+}
+
+function getCardSynergyAssignmentName(card) {
+    return normalizeHeaderText(getCardSynergyAssignment(card))
+}
+
+function getSynergyAssignmentOrderMap() {
+    let grouped = getSynergyColumnsByAssignment()
+    let columns = getVisibleSynergyColumns()
+    let order = {}
+    columns.forEach((column, idx) => {
+        let raw = normalizeHeaderText(column && column.assignment_label ? column.assignment_label : '')
+        if (!raw) {
+            return
+        }
+        let resolved = resolveSynergyAssignmentName(raw, grouped) || raw
+        if (!Object.prototype.hasOwnProperty.call(order, resolved)) {
+            order[resolved] = idx
+        }
+    })
+    return order
+}
+
+function getSynergyAssignmentOrderIndex(assignmentName, orderMap) {
+    let key = String(assignmentName || '')
+    if (!key || !orderMap || !Object.prototype.hasOwnProperty.call(orderMap, key)) {
+        return Number.MAX_SAFE_INTEGER
+    }
+    return Number(orderMap[key])
+}
+
+function compareMapperCardsByMethod(aCard, bCard, sortMethod, synergyOrderMap = null) {
+    let method = normalizeMapperSortMethod(sortMethod, defaultMapperSortMethod)
+
+    if (method === 'canvas_name_asc') {
+        let canvasCompare = compareTextAsc(getCardCanvasAssignmentName(aCard), getCardCanvasAssignmentName(bCard))
+        if (canvasCompare !== 0) {
+            return canvasCompare
+        }
+    } else if (method === 'synergy_name_asc') {
+        let synergyCompare = compareTextAsc(getCardSynergyAssignmentName(aCard), getCardSynergyAssignmentName(bCard))
+        if (synergyCompare !== 0) {
+            return synergyCompare
+        }
+    } else if (method === 'synergy_order_ltr') {
+        let aOrder = getSynergyAssignmentOrderIndex(getCardSynergyAssignment(aCard), synergyOrderMap)
+        let bOrder = getSynergyAssignmentOrderIndex(getCardSynergyAssignment(bCard), synergyOrderMap)
+        if (aOrder !== bOrder) {
+            return aOrder - bOrder
+        }
+    } else {
         let aTime = getCardLastUpdatedTimestamp(aCard)
         let bTime = getCardLastUpdatedTimestamp(bCard)
         if (aTime !== bTime) {
             return bTime - aTime
         }
+    }
 
-        let aLabel = String(getCardSynergyAssignment(aCard) || '')
-        let bLabel = String(getCardSynergyAssignment(bCard) || '')
-        let labelCompare = aLabel.localeCompare(bLabel)
-        if (labelCompare !== 0) {
-            return labelCompare
+    let synergyLabelCompare = compareTextAsc(getCardSynergyAssignmentName(aCard), getCardSynergyAssignmentName(bCard))
+    if (synergyLabelCompare !== 0) {
+        return synergyLabelCompare
+    }
+
+    let canvasLabelCompare = compareTextAsc(getCardCanvasAssignmentName(aCard), getCardCanvasAssignmentName(bCard))
+    if (canvasLabelCompare !== 0) {
+        return canvasLabelCompare
+    }
+
+    return getCardSortStableId(aCard) - getCardSortStableId(bCard)
+}
+
+function sortMapperCards(sortMethod = mapperState.sortMethod, showStatus = false) {
+    let resolvedSortMethod = normalizeMapperSortMethod(sortMethod, mapperState.sortMethod)
+    mapperState.sortMethod = resolvedSortMethod
+    updateSortControlsFromState()
+
+    let container = $('#bsd-map-cards')
+    let cards = container.children('.bsd-map-card').get()
+    if (cards.length <= 1) {
+        if (showStatus) {
+            let noun = cards.length === 1 ? 'tile' : 'tiles'
+            setMapperStatus(`Sorted ${cards.length} ${noun} by ${getMapperSortMethodLabel(resolvedSortMethod)}.`)
         }
+        return
+    }
 
-        let aId = Number(aCard.attr('data-card-id') || 0)
-        let bId = Number(bCard.attr('data-card-id') || 0)
-        return aId - bId
-    })
+    let synergyOrderMap = resolvedSortMethod === 'synergy_order_ltr' ? getSynergyAssignmentOrderMap() : null
+    cards.sort((a, b) => compareMapperCardsByMethod($(a), $(b), resolvedSortMethod, synergyOrderMap))
 
     cards.forEach((cardEl) => {
         container.append(cardEl)
     })
+
+    if (showStatus) {
+        setMapperStatus(`Sorted ${cards.length} tiles by ${getMapperSortMethodLabel(resolvedSortMethod)}.`)
+    }
+}
+
+function sortMapperCardsByMostRecentUpdate() {
+    sortMapperCards('canvas_recent_desc', false)
 }
 
 function getRowsForCard(card) {
@@ -2363,7 +3112,7 @@ function autoMatchAllMappings(force = false, showStatus = true, shouldPersist = 
         }
         altMatches += matchResult.altMatchedCount
     })
-    sortMapperCardsByMostRecentUpdate()
+    sortMapperCards(mapperState.sortMethod)
 
     if (shouldPersist) {
         persistMappingsFromUi()
@@ -2494,19 +3243,28 @@ function createMapperCard(cardData = {}) {
             autoMatchCanvasAltForRow($(rowEl), false)
         })
         updateCardPasteStates(card)
-        sortMapperCardsByMostRecentUpdate()
         persistMappingsFromUi()
     })
 
-    canvasAssignSelect.on('change', () => {
+    canvasAssignSelect.on('change', async () => {
         clearInlineMappingErrors(card)
+        let assignmentLabel = getSelectedCanvasAssignmentLabel(canvasAssignSelect)
+        if (assignmentLabel) {
+            let copied = await copyTextToClipboard(assignmentLabel)
+            if (copied) {
+                showClipboardCopyTooltip(canvasAssignSelect, 'Copied assignment title')
+            }
+            if (!copied && !clipboardCopyWarningShown) {
+                setMapperStatus('Could not copy assignment text to clipboard. Check browser clipboard permissions.', true)
+                clipboardCopyWarningShown = true
+            }
+        }
         updateCanvasUpdatedCell(card, canvasAssignSelect.val())
         refreshCardRowCanvasAltOptions(card)
         getRowsForCard(card).each((_, rowEl) => {
             autoMatchCanvasAltForRow($(rowEl), false)
         })
         updateCardPasteStates(card)
-        sortMapperCardsByMostRecentUpdate()
         persistMappingsFromUi()
     })
 
@@ -2830,12 +3588,12 @@ function renderMappingsFromState() {
     } else {
         seeds.forEach((seed) => addMapperCard(seed))
     }
-    sortMapperCardsByMostRecentUpdate()
+    sortMapperCards(mapperState.sortMethod)
 }
 
 async function refreshMapperPanel(showStatus = true) {
     if (refreshInFlight) {
-        return
+        return false
     }
     refreshInFlight = true
 
@@ -2846,8 +3604,8 @@ async function refreshMapperPanel(showStatus = true) {
             $('#bsd-map-cards').html('')
             await loadMapperStateFromStorage()
             updateMapperSettingsUiFromState()
-            refreshInFlight = false
-            return
+            updateSortControlsFromState()
+            return false
         }
 
         mapperState.activeTabId = tab.id
@@ -2855,6 +3613,7 @@ async function refreshMapperPanel(showStatus = true) {
 
         await loadMapperStateFromStorage()
         updateMapperSettingsUiFromState()
+        updateSortControlsFromState()
 
         let context = await requestSynergyMapperContext(tab.id)
         mapperState.columns = Array.isArray(context.columns) ? context.columns : []
@@ -2877,11 +3636,54 @@ async function refreshMapperPanel(showStatus = true) {
                 setMapperStatus(`Loaded ${fetchedCount} fetched Canvas assignment(s) and ${mapperState.columns.length} Synergy column(s).`)
             }
         }
+        return true
     } catch (e) {
         setMapperStatus(`Mapper refresh failed: ${e.message}`, true)
+        return false
     } finally {
         refreshInFlight = false
     }
+}
+
+function didSynergyCourseContextChange(previousKey, previousDisplay) {
+    let prevKey = String(previousKey || '')
+    let nextKey = String(mapperState.synergyCourseKey || '')
+    if (prevKey || nextKey) {
+        return prevKey !== nextKey
+    }
+
+    let prevDisplay = normalizeSynergyCourseDisplay(previousDisplay || '')
+    let nextDisplay = normalizeSynergyCourseDisplay(mapperState.synergyCourseDisplay || '')
+    return prevDisplay !== nextDisplay
+}
+
+async function runRefreshWorkflow() {
+    if (canvasFetchInFlight) {
+        setMapperStatus('Canvas fetch is in progress. Stop fetch before running Refresh.', true)
+        return
+    }
+
+    let previousSynergyCourseKey = String(mapperState.synergyCourseKey || '')
+    let previousSynergyCourseDisplay = String(mapperState.synergyCourseDisplay || '')
+
+    setMapperStatus('Refreshing Synergy context...')
+    let refreshed = await refreshMapperPanel(false)
+    if (!refreshed) {
+        return
+    }
+
+    if (didSynergyCourseContextChange(previousSynergyCourseKey, previousSynergyCourseDisplay)) {
+        await loadCanvasCourses(false, { resetSelectedCourse: true })
+    }
+
+    let assignmentNames = Object.keys(getSynergyColumnsByAssignment())
+    if (assignmentNames.length === 0) {
+        setMapperStatus('Synergy columns not detected yet. Refresh gradebook and click Refresh again.', true)
+        return
+    }
+
+    clearMapperMappings(false)
+    autoMatchAllMappings(true, true, true)
 }
 
 function setInstructionHoverStep(stepNumber = 0) {
@@ -2943,9 +3745,17 @@ function wireUiEvents() {
         stopCanvasFetch()
     })
 
-    $('#bsd-refresh-data').on('click', () => {
-        clearMapperMappings(false)
-        autoMatchAllMappings(true, true, true)
+    $('#bsd-refresh-data').on('click', async () => {
+        await runRefreshWorkflow()
+    })
+
+    $('#bsd-sort-method').on('change', () => {
+        persistSortMethodFromUi()
+    })
+
+    $('#bsd-apply-sort').on('click', () => {
+        persistSortMethodFromUi()
+        sortMapperCards(mapperState.sortMethod, true)
     })
 
     $('#bsd-add-mapping').on('click', () => {
@@ -2973,6 +3783,7 @@ async function initializeCanvasSourceUi() {
     renderCanvasAssignmentSummary()
     setCanvasCourseStatus('Open an authenticated Canvas tab, then click "Load Courses".')
     setCanvasFetchStatus('')
+    clearCanvasFetchProgress()
     updateCanvasActionButtons()
     await loadCanvasCourses(false)
 }

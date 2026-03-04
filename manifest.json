@@ -23,7 +23,7 @@
     "128": "images/arrow-128.png"
   },
   "options_page": "options.html",
-  "permissions": ["activeTab", "scripting", "storage", "tabs", "contextMenus", "sidePanel"],
+  "permissions": ["activeTab", "scripting", "storage", "unlimitedStorage", "tabs", "contextMenus", "sidePanel"],
   "host_permissions": ["https://*.instructure.com/*"],
    "content_scripts": [
   {
