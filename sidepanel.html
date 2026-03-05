@@ -11,8 +11,8 @@
             <h1>To use:</h1>
             <p class="bsd-panel-head-note">Start on the target Synergy gradebook section (View by Assignment or View by Standard).</p>
             <h2 id="bsd-step-title-1">1. Load courses and choose a Canvas course</h2>
-            <h2 id="bsd-step-title-2">2. Fetch Canvas Scores</h2>
-            <h2 id="bsd-step-title-3">3. Refresh</h2>
+            <h2 id="bsd-step-title-2">2. Click Refresh / Fetch Canvas Scores</h2>
+            <h2 id="bsd-step-title-3">3. Review and adjust mappings</h2>
             <h2 id="bsd-step-title-4">4. Paste (individually or All Mapped)</h2>
         </div>
 
@@ -44,10 +44,6 @@
                 </select>
             </div>
             <div id="bsd-canvas-course-status"></div>
-            <div class="bsd-canvas-fetch-row">
-                <span class="bsd-canvas-fetch-step">#2</span>
-                <button id="bsd-fetch-course-assignments" type="button">Fetch Canvas Scores</button>
-            </div>
             <div id="bsd-canvas-fetch-status"></div>
             <div id="bsd-canvas-fetch-progress" class="bsd-canvas-fetch-progress bsd-hidden">
                 <div class="bsd-canvas-fetch-progress-track">
@@ -71,6 +67,9 @@
                     </table>
                 </div>
             </details>
+            <div id="bsd-no-submissions-callout" class="bsd-no-submissions-callout bsd-hidden">
+                Fetch Canvas Scores to continue.
+            </div>
         </div>
 
         <div class="bsd-panel-settings">
@@ -92,9 +91,18 @@
             <div class="bsd-controls-top-row">
                 <div class="bsd-step-3-controls">
                     <button id="bsd-refresh-data" type="button">Refresh</button>
+                    <span id="bsd-refresh-activity" class="bsd-refresh-activity bsd-hidden" aria-live="polite">
+                        <span class="bsd-refresh-spinner" aria-hidden="true"></span>
+                        <span id="bsd-refresh-activity-text">Refreshing...</span>
+                    </span>
                 </div>
                 <div class="bsd-step-4-controls">
                     <button id="bsd-paste-all" type="button">Paste All Mapped</button>
+                    <span id="bsd-paste-all-activity" class="bsd-paste-all-activity bsd-hidden" aria-live="polite">
+                        <span class="bsd-paste-all-spinner" aria-hidden="true"></span>
+                        <span id="bsd-paste-all-activity-text">Pasting...</span>
+                    </span>
+                    <span id="bsd-paste-all-toast" class="bsd-paste-all-toast" aria-live="polite"></span>
                 </div>
             </div>
         </div>

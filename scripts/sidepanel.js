@@ -46,10 +46,12 @@ let suppressNextMappingsRefresh = false
 let suppressLocalRefreshEvents = false
 let refreshInFlight = false
 let canvasFetchInFlight = false
+let refreshActionInFlight = false
 let canvasFetchController = null
 let settingsPersistTimer = null
 let clipboardCopyWarningShown = false
 let clipboardCopyTooltipHideTimer = null
+let pasteAllToastHideTimer = null
 let canvasCacheTrimmedForQuota = false
 let canvasFetchProgressState = {
     total: 0,
@@ -61,6 +63,67 @@ function setMapperStatus(text, isError = false) {
     $('#bsd-mapper-status')
         .css('color', isError ? '#f9b1b1' : '#b4f7fe')
         .text(text)
+}
+
+function setPasteAllActivity(active, text = 'Pasting...') {
+    let activity = $('#bsd-paste-all-activity')
+    let activityText = $('#bsd-paste-all-activity-text')
+    let button = $('#bsd-paste-all')
+
+    if (activityText.length > 0) {
+        activityText.text(String(text || 'Pasting...'))
+    }
+
+    if (active) {
+        activity.removeClass('bsd-hidden')
+        button.prop('disabled', true)
+        return
+    }
+
+    activity.addClass('bsd-hidden')
+    button.prop('disabled', !hasPasteReadyMappings())
+}
+
+function setRefreshActivity(active, text = 'Refreshing...') {
+    let activity = $('#bsd-refresh-activity')
+    let activityText = $('#bsd-refresh-activity-text')
+
+    refreshActionInFlight = Boolean(active)
+
+    if (activityText.length > 0) {
+        activityText.text(String(text || 'Refreshing...'))
+    }
+
+    if (active) {
+        activity.removeClass('bsd-hidden')
+        updateCanvasActionButtons()
+        return
+    }
+
+    activity.addClass('bsd-hidden')
+    updateCanvasActionButtons()
+}
+
+function showPasteAllToast(text, isError = false, durationMs = 2200) {
+    let toast = $('#bsd-paste-all-toast')
+    if (toast.length === 0) {
+        return
+    }
+
+    if (pasteAllToastHideTimer) {
+        window.clearTimeout(pasteAllToastHideTimer)
+        pasteAllToastHideTimer = null
+    }
+
+    toast
+        .text(String(text || '').trim())
+        .toggleClass('bsd-error', Boolean(isError))
+        .addClass('bsd-visible')
+
+    pasteAllToastHideTimer = window.setTimeout(() => {
+        toast.removeClass('bsd-visible')
+        pasteAllToastHideTimer = null
+    }, Math.max(600, Number(durationMs) || 2200))
 }
 
 function isSynergyUrl(url) {
@@ -282,6 +345,7 @@ function normalizeMappingRecord(mapping) {
         col_index: String(safe.col_index || ''),
         synergy_assignment: cleanSynergyAssignmentLabel(safe.synergy_assignment || ''),
         synergy_alt: String(safe.synergy_alt || ''),
+        synergy_header_id: String(safe.synergy_header_id || ''),
         assignment_id: String(safe.assignment_id || ''),
         rubric_id: String(safe.rubric_id || '')
     }
@@ -319,6 +383,34 @@ function getManualSynergyAssignmentKey(synergyAssignment) {
     return normalized || ''
 }
 
+function getManualRowAlignmentKey(synergyAssignment, colIndex = '', synergyAlt = '') {
+    let synergyKey = getManualSynergyAssignmentKey(synergyAssignment)
+    if (!synergyKey) {
+        return ''
+    }
+
+    let altKey = normalizeForMatch(synergyAlt)
+    if (altKey) {
+        return `${synergyKey}::alt:${altKey}`
+    }
+
+    let colKey = String(colIndex || '').trim()
+    if (!colKey) {
+        return ''
+    }
+
+    return `${synergyKey}::col:${colKey}`
+}
+
+function getLegacyManualRowAlignmentKey(synergyAssignment, colIndex = '') {
+    let synergyKey = getManualSynergyAssignmentKey(synergyAssignment)
+    let colKey = String(colIndex || '').trim()
+    if (!synergyKey || !colKey) {
+        return ''
+    }
+    return `${synergyKey}::${colKey}`
+}
+
 function getEmptyManualAlignmentSet() {
     return {
         assignmentBySynergy: {},
@@ -345,15 +437,40 @@ function normalizeManualAlignmentSet(rawSet) {
         let normalizedRow = normalizeMappingRecord(row)
         let synergyKey = getManualSynergyAssignmentKey(normalizedRow.synergy_assignment)
         let colIndex = String(normalizedRow.col_index || '')
+        let synergyAlt = String(normalizedRow.synergy_alt || '')
         let assignmentId = String(normalizedRow.assignment_id || '')
         let rubricId = String(normalizedRow.rubric_id || '')
-        if (!synergyKey || !colIndex || !assignmentId || !rubricId) {
+        if (!synergyKey || !assignmentId || !rubricId) {
             return
         }
-        let key = `${synergyKey}::${colIndex}`
+        let key = getManualRowAlignmentKey(normalizedRow.synergy_assignment, colIndex, synergyAlt)
+        if (!key) {
+            // Backward compatibility for legacy key format keyed by col_index only.
+            let legacyMatch = String(rowKey || '').match(/^(.*?)::(.+)$/)
+            if (legacyMatch) {
+                let legacySynergyKey = String(legacyMatch[1] || '').trim()
+                let legacyColIndex = String(legacyMatch[2] || '').trim()
+                let looksLegacyColIndex = Boolean(
+                    legacyColIndex &&
+                    !legacyColIndex.startsWith('alt:') &&
+                    !legacyColIndex.startsWith('col:')
+                )
+                if (legacySynergyKey === synergyKey && looksLegacyColIndex) {
+                    key = getManualRowAlignmentKey(normalizedRow.synergy_assignment, legacyColIndex, '')
+                    if (!colIndex) {
+                        colIndex = legacyColIndex
+                    }
+                }
+            }
+        }
+        if (!key) {
+            return
+        }
         normalized.rowBySynergyCol[key] = {
             col_index: colIndex,
             synergy_assignment: normalizedRow.synergy_assignment,
+            synergy_alt: synergyAlt,
+            synergy_header_id: String(normalizedRow.synergy_header_id || ''),
             assignment_id: assignmentId,
             rubric_id: rubricId
         }
@@ -1050,25 +1167,38 @@ function isAbortError(error) {
     return message.toLowerCase().includes('abort')
 }
 
-function updateCanvasActionButtons() {
-    let hasCourse = Boolean(String($('#bsd-canvas-course-select').val() || mapperState.selectedCanvasCourseId || ''))
-
-    if (canvasFetchInFlight) {
-        $('#bsd-load-canvas-courses').prop('disabled', true)
-        $('#bsd-canvas-include-concluded').prop('disabled', true)
-        $('#bsd-canvas-course-filter').prop('disabled', true)
-        $('#bsd-canvas-course-select').prop('disabled', true)
-        $('#bsd-fetch-course-assignments').prop('disabled', true)
-        $('#bsd-stop-canvas-fetch').prop('disabled', false)
+function updatePrimaryRefreshButtonUi() {
+    let button = $('#bsd-refresh-data')
+    if (button.length === 0) {
         return
     }
 
-    $('#bsd-load-canvas-courses').prop('disabled', false)
-    $('#bsd-canvas-include-concluded').prop('disabled', false)
-    $('#bsd-canvas-course-filter').prop('disabled', false)
-    $('#bsd-canvas-course-select').prop('disabled', false)
-    $('#bsd-fetch-course-assignments').prop('disabled', !hasCourse)
-    $('#bsd-stop-canvas-fetch').prop('disabled', true)
+    let hasCourse = hasSelectedCanvasCourse()
+    let hasFetched = hasCourse && hasFetchedSubmissionsReady()
+    let isFetchMode = !hasFetched
+
+    button
+        .text(isFetchMode ? 'Fetch Canvas Scores' : 'Refresh')
+        .toggleClass('bsd-fetch-mode', isFetchMode)
+        .attr(
+            'title',
+            isFetchMode
+                ? 'Fetch Canvas scores and submissions for the selected course.'
+                : 'Refresh Synergy context and re-run auto-match.'
+        )
+}
+
+function updateCanvasActionButtons() {
+    let hasCourse = Boolean(String($('#bsd-canvas-course-select').val() || mapperState.selectedCanvasCourseId || ''))
+    let controlsDisabled = canvasFetchInFlight || refreshActionInFlight
+
+    $('#bsd-load-canvas-courses').prop('disabled', controlsDisabled)
+    $('#bsd-canvas-include-concluded').prop('disabled', controlsDisabled)
+    $('#bsd-canvas-course-filter').prop('disabled', controlsDisabled)
+    $('#bsd-canvas-course-select').prop('disabled', controlsDisabled)
+    $('#bsd-refresh-data').prop('disabled', !hasCourse || controlsDisabled)
+    $('#bsd-stop-canvas-fetch').prop('disabled', !canvasFetchInFlight)
+    updatePrimaryRefreshButtonUi()
 }
 
 function setCanvasControlsDisabled(disabled) {
@@ -2618,6 +2748,145 @@ function getSynergyColumnByIndex(colIndex) {
     return null
 }
 
+function getSynergyColumnByHeaderId(headerId) {
+    let wanted = String(headerId || '').trim()
+    if (!wanted) {
+        return null
+    }
+    let columns = getVisibleSynergyColumns()
+    for (let i = 0; i < columns.length; i++) {
+        if (String(columns[i].header_id || '').trim() === wanted) {
+            return columns[i]
+        }
+    }
+    return null
+}
+
+function getSynergyColumnAltText(column) {
+    if (!column || typeof column !== 'object') {
+        return ''
+    }
+    return normalizeHeaderText(column.alt_label || column.label || '')
+}
+
+function getResolvedSynergyAssignmentForColumn(column, groupedColumns = null) {
+    if (!column || typeof column !== 'object') {
+        return ''
+    }
+    let grouped = groupedColumns || getSynergyColumnsByAssignment()
+    let raw = cleanSynergyAssignmentLabel(column.assignment_label || '')
+    let resolved = resolveSynergyAssignmentName(raw, grouped)
+    return resolved || raw
+}
+
+function doesSynergyColumnMatchStoredMapping(column, mapping, groupedColumns = null) {
+    if (!column || !mapping) {
+        return false
+    }
+
+    let stored = normalizeMappingRecord(mapping)
+    let storedHeaderId = String(stored.synergy_header_id || '').trim()
+    let storedAssignment = cleanSynergyAssignmentLabel(stored.synergy_assignment || '')
+    let resolvedStoredAssignment = resolveSynergyAssignmentName(storedAssignment, groupedColumns)
+    let storedAltKey = normalizeForMatch(stored.synergy_alt)
+
+    if (storedHeaderId && String(column.header_id || '').trim() !== storedHeaderId) {
+        return false
+    }
+
+    if (resolvedStoredAssignment) {
+        let columnAssignment = getResolvedSynergyAssignmentForColumn(column, groupedColumns)
+        if (columnAssignment !== resolvedStoredAssignment) {
+            return false
+        }
+    }
+
+    if (storedAltKey) {
+        let columnAltKey = normalizeForMatch(getSynergyColumnAltText(column))
+        if (!columnAltKey || columnAltKey !== storedAltKey) {
+            return false
+        }
+    }
+
+    return true
+}
+
+function resolveSynergyColumnForStoredMapping(mapping, groupedColumns = null) {
+    let stored = normalizeMappingRecord(mapping)
+    let grouped = groupedColumns || getSynergyColumnsByAssignment()
+    let storedColIndex = String(stored.col_index || '').trim()
+    let storedHeaderId = String(stored.synergy_header_id || '').trim()
+    let storedAssignment = cleanSynergyAssignmentLabel(stored.synergy_assignment || '')
+    let resolvedAssignment = resolveSynergyAssignmentName(storedAssignment, grouped)
+    let storedAlt = normalizeHeaderText(stored.synergy_alt || '')
+    let storedAltKey = normalizeForMatch(storedAlt)
+    let hasMatchMetadata = Boolean(storedHeaderId || resolvedAssignment || storedAltKey)
+
+    let byIndex = storedColIndex ? getSynergyColumnByIndex(storedColIndex) : null
+    if (byIndex && (!hasMatchMetadata || doesSynergyColumnMatchStoredMapping(byIndex, stored, grouped))) {
+        return byIndex
+    }
+
+    if (storedHeaderId) {
+        let byHeaderId = getSynergyColumnByHeaderId(storedHeaderId)
+        if (byHeaderId && doesSynergyColumnMatchStoredMapping(byHeaderId, stored, grouped)) {
+            return byHeaderId
+        }
+    }
+
+    let assignmentColumns = []
+    if (resolvedAssignment && Array.isArray(grouped[resolvedAssignment])) {
+        assignmentColumns = grouped[resolvedAssignment]
+    }
+
+    if (storedAltKey) {
+        let searchPool = assignmentColumns.length > 0 ? assignmentColumns : getVisibleSynergyColumns()
+        let exactAltMatch = searchPool.find((column) => normalizeForMatch(getSynergyColumnAltText(column)) === storedAltKey)
+        if (exactAltMatch) {
+            return exactAltMatch
+        }
+
+        let fuzzy = findBestMatch(
+            storedAlt,
+            searchPool,
+            (column) => getSynergyColumnAltText(column),
+            0.82,
+            altSimilarityScore
+        )
+        if (fuzzy && fuzzy.item) {
+            return fuzzy.item
+        }
+    }
+
+    if (!storedAltKey && assignmentColumns.length === 1) {
+        return assignmentColumns[0]
+    }
+
+    if (byIndex && !hasMatchMetadata) {
+        return byIndex
+    }
+
+    return null
+}
+
+function reconcileStoredMappingToVisibleColumns(mapping, groupedColumns = null) {
+    let normalized = normalizeMappingRecord(mapping)
+    let grouped = groupedColumns || getSynergyColumnsByAssignment()
+    let column = resolveSynergyColumnForStoredMapping(normalized, grouped)
+
+    if (!column) {
+        normalized.col_index = ''
+        return normalized
+    }
+
+    normalized.col_index = String(column.col_index || '')
+    normalized.synergy_header_id = String(column.header_id || normalized.synergy_header_id || '')
+    normalized.synergy_assignment = getResolvedSynergyAssignmentForColumn(column, grouped) || normalized.synergy_assignment
+    normalized.synergy_alt = normalizeHeaderText(normalized.synergy_alt || getSynergyColumnAltText(column))
+
+    return normalized
+}
+
 function getSynergyColumnsByAssignment() {
     let columns = getVisibleSynergyColumns()
     let grouped = {}
@@ -2769,12 +3038,19 @@ function updateCourseStepUi() {
 }
 
 function updateMapperReadyUi() {
-    let ready = hasSelectedCanvasCourse() && hasFetchedSubmissionsReady()
+    let hasCourse = hasSelectedCanvasCourse()
+    let hasFetched = hasCourse && hasFetchedSubmissionsReady()
+    let ready = hasCourse && hasFetched
+    let assignmentsLoaded = hasCourse && getCachedAssignmentsForSelectedCourse().length > 0
+    let showFetchPrompt = assignmentsLoaded && !hasFetched && !canvasFetchInFlight
+
     $('.bsd-panel-settings').toggleClass('bsd-no-submissions', !ready)
     $('.bsd-add-assignment-row').toggleClass('bsd-no-submissions', !ready)
     $('.bsd-sort-controls').toggleClass('bsd-no-submissions', !ready)
-    $('.bsd-controls').toggleClass('bsd-no-submissions', !ready)
+    $('.bsd-step-4-controls').toggleClass('bsd-no-submissions', !ready)
     $('#bsd-map-cards').toggleClass('bsd-no-submissions', !ready)
+    $('#bsd-no-submissions-callout').toggleClass('bsd-hidden', !showFetchPrompt)
+    updatePrimaryRefreshButtonUi()
     updateCourseStepUi()
 }
 
@@ -2817,6 +3093,7 @@ function buildSynergyAltOptions(selectEl, selectedSynergyAssignment, selectedCol
         let option = $('<option></option>')
             .attr('value', column.col_index)
             .attr('data-alt', displayAlt)
+            .attr('data-header-id', String(column.header_id || ''))
             .text(displayAlt)
         if (String(selectedColIndex) === String(column.col_index)) {
             option.attr('selected', true)
@@ -2831,6 +3108,7 @@ function buildSynergyAltOptions(selectEl, selectedSynergyAssignment, selectedCol
             $('<option></option>')
                 .attr('value', selected)
                 .attr('data-alt', `Column ${selected}`)
+                .attr('data-header-id', '')
                 .attr('selected', true)
                 .text(`[${selected}] Column ${selected}`)
         )
@@ -3553,12 +3831,14 @@ function buildCardSeedsFromMappings(mappings) {
         return []
     }
 
+    let groupedColumns = getSynergyColumnsByAssignment()
     let grouped = {}
     mappings.forEach((mapping) => {
-        let colIndex = String(mapping.col_index || '')
+        let reconciled = reconcileStoredMappingToVisibleColumns(mapping, groupedColumns)
+        let colIndex = String(reconciled.col_index || '')
         let column = colIndex ? getSynergyColumnByIndex(colIndex) : null
-        let derivedAssignment = cleanSynergyAssignmentLabel(mapping.synergy_assignment || (column ? column.assignment_label : ''))
-        let resolvedAssignment = resolveSynergyAssignmentName(derivedAssignment)
+        let derivedAssignment = cleanSynergyAssignmentLabel(reconciled.synergy_assignment || (column ? column.assignment_label : ''))
+        let resolvedAssignment = resolveSynergyAssignmentName(derivedAssignment, groupedColumns)
         if (resolvedAssignment) {
             derivedAssignment = resolvedAssignment
         }
@@ -3567,18 +3847,26 @@ function buildCardSeedsFromMappings(mappings) {
         if (!grouped[groupKey]) {
             grouped[groupKey] = {
                 synergy_assignment: derivedAssignment,
-                assignment_id: String(mapping.assignment_id || ''),
+                assignment_id: String(reconciled.assignment_id || ''),
                 rows: []
             }
         }
 
-        if (!grouped[groupKey].assignment_id && mapping.assignment_id) {
-            grouped[groupKey].assignment_id = String(mapping.assignment_id)
+        if (!grouped[groupKey].assignment_id && reconciled.assignment_id) {
+            grouped[groupKey].assignment_id = String(reconciled.assignment_id)
+        }
+
+        if (!colIndex) {
+            return
+        }
+
+        if (grouped[groupKey].rows.some((row) => String(row.col_index || '') === colIndex)) {
+            return
         }
 
         grouped[groupKey].rows.push({
             col_index: colIndex,
-            rubric_id: String(mapping.rubric_id || '')
+            rubric_id: String(reconciled.rubric_id || '')
         })
     })
 
@@ -3601,6 +3889,7 @@ function collectMappingsFromUi() {
                 col_index: row.find('.bsd-syn-alt-select').val(),
                 synergy_assignment: synergyAssignment,
                 synergy_alt: String(selectedSynAltOption.attr('data-alt') || ''),
+                synergy_header_id: String(selectedSynAltOption.attr('data-header-id') || ''),
                 assignment_id: canvasAssignmentId,
                 rubric_id: row.find('.bsd-canvas-alt-select').val()
             })
@@ -3631,11 +3920,22 @@ function persistMappingsFromUi() {
     persistMappingsToStorage(mappings, true)
 }
 
-function clearMapperMappings(showStatus = true) {
+function clearMapperMappings(showStatus = true, options = {}) {
     $('#bsd-map-cards').html('')
     mapperState.mappings = []
+    let clearPairStore = options && options.clearPairStore === true
+    let payload = { [mapperStorageKey]: [] }
+    if (clearPairStore) {
+        let pairKey = getActiveSynergyCanvasPairKey()
+        if (pairKey) {
+            let byPair = ensurePlainObject(mapperState.mappingsByPair)
+            delete byPair[pairKey]
+            mapperState.mappingsByPair = byPair
+            payload[mapperMappingsByPairStorageKey] = mapperState.mappingsByPair
+        }
+    }
     suppressNextMappingsRefresh = true
-    chrome.storage.local.set({ [mapperStorageKey]: [] })
+    chrome.storage.local.set(payload)
     if (showStatus) {
         setMapperStatus('Mappings cleared. Click Add Assignment or Auto-Match.')
     }
@@ -3648,6 +3948,7 @@ function getMappingFromRow(row) {
         col_index: row.find('.bsd-syn-alt-select').val(),
         synergy_assignment: getCardSynergyAssignment(card),
         synergy_alt: String(selectedSynAltOption.attr('data-alt') || ''),
+        synergy_header_id: String(selectedSynAltOption.attr('data-header-id') || ''),
         assignment_id: getCardCanvasAssignment(card),
         rubric_id: row.find('.bsd-canvas-alt-select').val()
     }
@@ -3710,11 +4011,12 @@ function rememberManualRowAlignment(row) {
     let mapping = getMappingFromRow(row)
     let synergyKey = getManualSynergyAssignmentKey(mapping.synergy_assignment)
     let colIndex = String(mapping.col_index || '')
-    if (!synergyKey || !colIndex) {
+    let rowKey = getManualRowAlignmentKey(mapping.synergy_assignment, colIndex, mapping.synergy_alt)
+    let legacyRowKey = getLegacyManualRowAlignmentKey(mapping.synergy_assignment, colIndex)
+    if (!synergyKey || !rowKey) {
         return
     }
 
-    let rowKey = `${synergyKey}::${colIndex}`
     let manualSet = getManualAlignmentDataForCurrentPair()
     let assignmentId = String(mapping.assignment_id || '')
     let rubricId = String(mapping.rubric_id || '')
@@ -3727,11 +4029,19 @@ function rememberManualRowAlignment(row) {
         manualSet.rowBySynergyCol[rowKey] = {
             col_index: colIndex,
             synergy_assignment: String(mapping.synergy_assignment || ''),
+            synergy_alt: String(mapping.synergy_alt || ''),
+            synergy_header_id: String(mapping.synergy_header_id || ''),
             assignment_id: assignmentId,
             rubric_id: rubricId
         }
+        if (legacyRowKey && legacyRowKey !== rowKey) {
+            delete manualSet.rowBySynergyCol[legacyRowKey]
+        }
     } else {
         delete manualSet.rowBySynergyCol[rowKey]
+        if (legacyRowKey && legacyRowKey !== rowKey) {
+            delete manualSet.rowBySynergyCol[legacyRowKey]
+        }
     }
 
     persistManualAlignmentDataForCurrentPair(manualSet)
@@ -3739,15 +4049,20 @@ function rememberManualRowAlignment(row) {
 
 function forgetManualRowAlignment(row) {
     let mapping = getMappingFromRow(row)
-    let synergyKey = getManualSynergyAssignmentKey(mapping.synergy_assignment)
     let colIndex = String(mapping.col_index || '')
-    if (!synergyKey || !colIndex) {
+    let rowKey = getManualRowAlignmentKey(mapping.synergy_assignment, colIndex, mapping.synergy_alt)
+    let legacyRowKey = getLegacyManualRowAlignmentKey(mapping.synergy_assignment, colIndex)
+    if (!rowKey && !legacyRowKey) {
         return
     }
 
-    let rowKey = `${synergyKey}::${colIndex}`
     let manualSet = getManualAlignmentDataForCurrentPair()
-    delete manualSet.rowBySynergyCol[rowKey]
+    if (rowKey) {
+        delete manualSet.rowBySynergyCol[rowKey]
+    }
+    if (legacyRowKey) {
+        delete manualSet.rowBySynergyCol[legacyRowKey]
+    }
     persistManualAlignmentDataForCurrentPair(manualSet)
 }
 
@@ -3839,7 +4154,8 @@ function applyStoredManualAlignmentsForCurrentPair(shouldPersistMappings = false
 
         rowOverrideList.forEach((rowOverride) => {
             let override = rowOverride && typeof rowOverride === 'object' ? rowOverride : {}
-            let colIndex = String(override.col_index || '')
+            let resolvedOverride = reconcileStoredMappingToVisibleColumns(override)
+            let colIndex = String(resolvedOverride.col_index || '')
             let rubricId = String(override.rubric_id || '')
             if (!colIndex || !rubricId) {
                 return
@@ -4036,22 +4352,50 @@ async function pasteAllMappings() {
     let rows = $('#bsd-map-cards .bsd-map-row')
     if (rows.length === 0) {
         setMapperStatus('No mapping rows to paste.', true)
+        showPasteAllToast('No mapped rows to paste.', true)
         return
     }
 
     let tab = await resolveSynergyTab()
     if (!tab) {
         setMapperStatus('Open a Synergy gradebook tab before pasting.', true)
+        showPasteAllToast('Open Synergy gradebook to paste.', true)
         return
     }
     mapperState.activeTabId = tab.id
     mapperState.activeTabUrl = tab.url || ''
 
     setMapperStatus(`Pasting ${rows.length} mapping row(s)...`)
-    for (let i = 0; i < rows.length; i++) {
-        await pasteSingleRow($(rows[i]), tab)
+    setPasteAllActivity(true, `Pasting ${rows.length} rows...`)
+    let successCount = 0
+    let errorCount = 0
+
+    try {
+        for (let i = 0; i < rows.length; i++) {
+            let row = $(rows[i])
+            await pasteSingleRow(row, tab)
+            let rowStatus = String(row.find('.bsd-row-status').text() || '')
+            if (rowStatus.startsWith('Done:')) {
+                successCount += 1
+            } else if (rowStatus.startsWith('Error:')) {
+                errorCount += 1
+            }
+        }
+    } catch (e) {
+        setMapperStatus(`Paste run failed: ${e.message}`, true)
+        showPasteAllToast('Paste failed. Check row statuses.', true, 3000)
+        return
+    } finally {
+        setPasteAllActivity(false)
     }
-    setMapperStatus(`Paste run complete for ${rows.length} mapping row(s).`)
+
+    if (errorCount > 0) {
+        setMapperStatus(`Paste run complete: ${successCount}/${rows.length} succeeded, ${errorCount} failed.`, true)
+        showPasteAllToast(`Paste complete: ${successCount}/${rows.length} succeeded`, true, 2800)
+    } else {
+        setMapperStatus(`Paste run complete for ${rows.length} mapping row(s).`)
+        showPasteAllToast(`Paste successful: ${successCount}/${rows.length} rows`, false, 2200)
+    }
 }
 
 function renderMappingsFromState() {
@@ -4148,7 +4492,7 @@ async function runRefreshWorkflow() {
     let previousSynergyCourseKey = String(mapperState.synergyCourseKey || '')
     let previousSynergyCourseDisplay = String(mapperState.synergyCourseDisplay || '')
 
-    setMapperStatus('Refreshing Synergy context...')
+    setMapperStatus('Refreshing Synergy context and checking Canvas updates...')
     let refreshed = await refreshMapperPanel(false)
     if (!refreshed) {
         return
@@ -4164,13 +4508,41 @@ async function runRefreshWorkflow() {
         return
     }
 
-    clearMapperMappings(false)
-    autoMatchAllMappings(true, true, true)
-    let appliedManual = applyStoredManualAlignmentsForCurrentPair(true)
-    if ((appliedManual.assignmentCount + appliedManual.rowCount) > 0) {
-        setMapperStatus(
-            `Refresh complete. Re-applied ${appliedManual.assignmentCount} manual assignment and ${appliedManual.rowCount} manual target alignment(s).`
-        )
+    await fetchCanvasScoresAndAutoMatch()
+}
+
+async function fetchCanvasScoresAndAutoMatch() {
+    if (canvasFetchInFlight) {
+        setMapperStatus('Canvas fetch is already in progress.', true)
+        return
+    }
+    if (!hasSelectedCanvasCourse()) {
+        setMapperStatus('Select a Canvas course first.', true)
+        return
+    }
+
+    suppressLocalRefreshEvents = true
+    try {
+        clearMapperMappings(false, { clearPairStore: true })
+        let fetchResult = await fetchAllCanvasDataForCourse(mapperState.selectedCanvasCourseId, {
+            manageLoading: true,
+            forceAssignmentsRefresh: false
+        })
+
+        if (!fetchResult) {
+            return
+        }
+
+        await refreshMapperPanel(false)
+        autoMatchAllMappings(true, true, true)
+        let appliedManual = applyStoredManualAlignmentsForCurrentPair(true)
+        if ((appliedManual.assignmentCount + appliedManual.rowCount) > 0) {
+            setMapperStatus(
+                `Auto-match complete. Re-applied ${appliedManual.assignmentCount} manual assignment and ${appliedManual.rowCount} manual target alignment(s).`
+            )
+        }
+    } finally {
+        suppressLocalRefreshEvents = false
     }
 }
 
@@ -4209,38 +4581,26 @@ function wireUiEvents() {
         await onCanvasCourseSelectionChanged(false)
     })
 
-    $('#bsd-fetch-course-assignments').on('click', async () => {
-        suppressLocalRefreshEvents = true
-        try {
-            clearMapperMappings(false)
-            let fetchResult = await fetchAllCanvasDataForCourse(mapperState.selectedCanvasCourseId, {
-                manageLoading: true,
-                forceAssignmentsRefresh: false
-            })
-
-            if (!fetchResult) {
-                return
-            }
-
-            await refreshMapperPanel(false)
-            autoMatchAllMappings(true, true, true)
-            let appliedManual = applyStoredManualAlignmentsForCurrentPair(true)
-            if ((appliedManual.assignmentCount + appliedManual.rowCount) > 0) {
-                setMapperStatus(
-                    `Auto-match complete. Re-applied ${appliedManual.assignmentCount} manual assignment and ${appliedManual.rowCount} manual target alignment(s).`
-                )
-            }
-        } finally {
-            suppressLocalRefreshEvents = false
-        }
-    })
-
     $('#bsd-stop-canvas-fetch').on('click', () => {
         stopCanvasFetch()
     })
 
     $('#bsd-refresh-data').on('click', async () => {
-        await runRefreshWorkflow()
+        if (refreshActionInFlight) {
+            return
+        }
+
+        let hasFetched = hasFetchedSubmissionsReady()
+        setRefreshActivity(true, hasFetched ? 'Refreshing...' : 'Fetching...')
+        try {
+            if (hasFetched) {
+                await runRefreshWorkflow()
+                return
+            }
+            await fetchCanvasScoresAndAutoMatch()
+        } finally {
+            setRefreshActivity(false)
+        }
     })
 
     $('#bsd-sort-method').on('change', () => {
@@ -4273,6 +4633,7 @@ function wireUiEvents() {
 async function initializeCanvasSourceUi() {
     $('#bsd-canvas-include-concluded').prop('checked', Boolean(mapperState.canvasIncludeConcludedCourses))
     $('#bsd-canvas-course-filter').val(mapperState.canvasCourseFilter || '')
+    setRefreshActivity(false)
     renderCanvasCourseOptions()
     renderCanvasAssignmentSummary()
     setCanvasCourseStatus('Open an authenticated Canvas tab, then click "Load Courses".')
