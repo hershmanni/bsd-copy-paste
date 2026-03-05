@@ -4113,8 +4113,28 @@ function applyStoredManualAlignmentsForCurrentPair(shouldPersistMappings = false
             let overrideKey = getManualSynergyAssignmentKey(override.synergy_assignment)
             return overrideKey === synergyKey
         })
-        if (wantedAssignmentId && rowOverrideList.length > 0) {
-            let hasMatchingOverride = rowOverrideList.some((rowOverride) => {
+        let resolvedRowOverrideList = rowOverrideList
+            .map((rowOverride) => {
+                let override = rowOverride && typeof rowOverride === 'object' ? rowOverride : {}
+                let resolvedOverride = reconcileStoredMappingToVisibleColumns(override)
+                let colIndex = String(resolvedOverride.col_index || '')
+                let rubricId = String(override.rubric_id || resolvedOverride.rubric_id || '')
+                let assignmentId = String(override.assignment_id || resolvedOverride.assignment_id || '')
+                if (!colIndex || !rubricId) {
+                    return null
+                }
+                return {
+                    ...override,
+                    ...resolvedOverride,
+                    col_index: colIndex,
+                    rubric_id: rubricId,
+                    assignment_id: assignmentId
+                }
+            })
+            .filter(Boolean)
+
+        if (wantedAssignmentId && resolvedRowOverrideList.length > 0) {
+            let hasMatchingOverride = resolvedRowOverrideList.some((rowOverride) => {
                 let override = rowOverride && typeof rowOverride === 'object' ? rowOverride : {}
                 return String(override.assignment_id || '') === wantedAssignmentId
             })
@@ -4122,9 +4142,9 @@ function applyStoredManualAlignmentsForCurrentPair(shouldPersistMappings = false
                 wantedAssignmentId = ''
             }
         }
-        if (!wantedAssignmentId && rowOverrideList.length > 0) {
+        if (!wantedAssignmentId && resolvedRowOverrideList.length > 0) {
             let counts = {}
-            rowOverrideList.forEach((rowOverride) => {
+            resolvedRowOverrideList.forEach((rowOverride) => {
                 let override = rowOverride && typeof rowOverride === 'object' ? rowOverride : {}
                 let assignmentId = String(override.assignment_id || '')
                 if (!assignmentId) {
@@ -4135,12 +4155,11 @@ function applyStoredManualAlignmentsForCurrentPair(shouldPersistMappings = false
             wantedAssignmentId = Object.keys(counts).sort((a, b) => Number(counts[b]) - Number(counts[a]))[0] || ''
         }
         if (wantedAssignmentId) {
-            rowOverrideList = rowOverrideList.filter((rowOverride) => {
+            resolvedRowOverrideList = resolvedRowOverrideList.filter((rowOverride) => {
                 let override = rowOverride && typeof rowOverride === 'object' ? rowOverride : {}
                 return String(override.assignment_id || '') === wantedAssignmentId
             })
         }
-
         if (
             wantedAssignmentId &&
             selectHasOptionValue(canvasAssignSelect, wantedAssignmentId) &&
@@ -4152,10 +4171,9 @@ function applyStoredManualAlignmentsForCurrentPair(shouldPersistMappings = false
             assignmentCount += 1
         }
 
-        rowOverrideList.forEach((rowOverride) => {
+        resolvedRowOverrideList.forEach((rowOverride) => {
             let override = rowOverride && typeof rowOverride === 'object' ? rowOverride : {}
-            let resolvedOverride = reconcileStoredMappingToVisibleColumns(override)
-            let colIndex = String(resolvedOverride.col_index || '')
+            let colIndex = String(override.col_index || '')
             let rubricId = String(override.rubric_id || '')
             if (!colIndex || !rubricId) {
                 return
