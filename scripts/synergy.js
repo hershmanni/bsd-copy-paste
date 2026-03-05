@@ -1130,6 +1130,7 @@ async function paste_scores_to_column(scores, column_index, roundUpFrom, missing
     let skippedNoPasteValue = 0
     let failedInjection = 0
     let filledNoCanvasMatch = 0
+    let pendingInjections = []
 
     await asyncForEach(visibleSynergyIds, async (id) => {
         let score = scoreById[id]
@@ -1167,10 +1168,7 @@ async function paste_scores_to_column(scores, column_index, roundUpFrom, missing
             return
         }
 
-        let message = {
-            to: 'background.js',
-            from: 'synergy.js',
-            title: 'inject',
+        pendingInjections.push({
             score: score.score,
             late: score.late,
             excused: score.excused,
@@ -1178,21 +1176,77 @@ async function paste_scores_to_column(scores, column_index, roundUpFrom, missing
             synergy_id: id,
             row: row_index,
             col: String(col_index)
-        }
+        })
+    })
 
+    async function runSequentialInjectionFallback(injections) {
+        let fallbackPushed = 0
+        let fallbackFailed = 0
+
+        await asyncForEach(injections, async (injection) => {
+            let message = {
+                to: 'background.js',
+                from: 'synergy.js',
+                title: 'inject',
+                score: injection.score,
+                late: injection.late,
+                excused: injection.excused,
+                missing: injection.missing,
+                synergy_id: injection.synergy_id,
+                row: injection.row,
+                col: injection.col
+            }
+
+            try {
+                let injectResult = await runtimeSendMessage(message)
+                if (!injectResult || injectResult.ok !== true) {
+                    let errText = injectResult && injectResult.error ? injectResult.error : 'Unknown injection failure.'
+                    throw new Error(errText)
+                }
+                fallbackPushed++
+            } catch (e) {
+                console.log(`Failed to inject score for Synergy ID ${injection.synergy_id} in column ${col_index}`, e)
+                fallbackFailed++
+            }
+        })
+
+        return {
+            pushed: fallbackPushed,
+            failed: fallbackFailed
+        }
+    }
+
+    if (pendingInjections.length > 0) {
         try {
-            let injectResult = await runtimeSendMessage(message)
-            if (!injectResult || injectResult.ok !== true) {
-                let errText = injectResult && injectResult.error ? injectResult.error : 'Unknown injection failure.'
+            let batchMessage = {
+                to: 'background.js',
+                from: 'synergy.js',
+                title: 'inject_batch',
+                updates: pendingInjections
+            }
+            let batchResult = await runtimeSendMessage(batchMessage)
+            if (!batchResult || batchResult.ok !== true || !batchResult.result) {
+                let errText = batchResult && batchResult.error ? batchResult.error : 'Unknown batch injection failure.'
                 throw new Error(errText)
             }
-            pushed++
+
+            let updatedCount = Number(batchResult.result.updated_count || 0)
+            let failedCount = Number(batchResult.result.failed_count || 0)
+            if (!Number.isFinite(updatedCount) || !Number.isFinite(failedCount)) {
+                throw new Error('Batch injection returned invalid counters.')
+            }
+
+            pushed += Math.max(0, updatedCount)
+            failedInjection += Math.max(0, failedCount)
+            skippedTarget += Math.max(0, failedCount)
         } catch (e) {
-            console.log(`Failed to inject score for Synergy ID ${id} in column ${col_index}`, e)
-            skippedTarget++
-            failedInjection++
+            console.log('Batch injection failed; falling back to sequential injection.', e)
+            let fallbackResult = await runSequentialInjectionFallback(pendingInjections)
+            pushed += fallbackResult.pushed
+            failedInjection += fallbackResult.failed
+            skippedTarget += fallbackResult.failed
         }
-    })
+    }
 
     return {
         target_total: visibleSynergyIds.length,
@@ -2441,7 +2495,7 @@ async function runMappingPaste(mapping) {
 
     let scores = getScoresFromSubmissionsByRubricId(submissions, mapping.rubric_id)
     if (scores.length === 0) {
-        throw new Error('No rubric scores found for mapped assignment/rubric.')
+        throw new Error('No rubric scores found for mapped assignment/rubric. Re-select the Canvas target for this row and try again.')
     }
 
     if (!synergy_env_ready()) {

@@ -495,6 +495,140 @@ function bg_syn_update(score, synergy_id, row_index, col_index) {
     }
 }
 
+function bg_syn_update_batch(updates) {
+    let safeUpdates = Array.isArray(updates) ? updates : []
+    if (safeUpdates.length === 0) {
+        return {
+            ok: true,
+            updated_count: 0,
+            failed_count: 0,
+            results: []
+        }
+    }
+
+    let docs = [document]
+    try {
+        if (window.frames && window.frames.length > 0) {
+            for (let i = 0; i < window.frames.length; i++) {
+                try {
+                    if (window.frames[i] && window.frames[i].document) {
+                        docs.push(window.frames[i].document)
+                    }
+                } catch (frameErr) {
+                    // pass inaccessible frame
+                }
+            }
+        }
+    } catch (e) {
+        // pass
+    }
+
+    let hostDoc = null
+    let scoreTable = null
+    for (let i = 0; i < docs.length; i++) {
+        let table = docs[i].querySelector('.dx-datagrid-rowsview table')
+        if (table) {
+            hostDoc = docs[i]
+            scoreTable = table
+            break
+        }
+    }
+
+    if (!hostDoc || !scoreTable) {
+        throw new Error('Synergy score table not found in current document/frame.')
+    }
+
+    let rowByIndex = {}
+    let rowBySynergyId = {}
+    scoreTable.querySelectorAll('tr[aria-rowindex]').forEach((rowEl) => {
+        let rowIndex = String(rowEl.getAttribute('aria-rowindex') || '')
+        if (rowIndex && !rowByIndex[rowIndex]) {
+            rowByIndex[rowIndex] = rowEl
+        }
+        let perm = rowEl.querySelector('span.student-perm-id')
+        let synergyId = String((perm && perm.textContent) || '').trim()
+        if (synergyId && !rowBySynergyId[synergyId]) {
+            rowBySynergyId[synergyId] = rowEl
+        }
+    })
+
+    let updatedCount = 0
+    let results = []
+
+    safeUpdates.forEach((rawUpdate) => {
+        let update = rawUpdate && typeof rawUpdate === 'object' ? rawUpdate : {}
+        let score = update.score == null ? '' : String(update.score)
+        let synergyId = String(update.synergy_id || '').trim()
+        let rowIndex = String(update.row || '').trim()
+        let colIndex = String(update.col || '').trim()
+
+        try {
+            if (!synergyId || !rowIndex || !colIndex) {
+                throw new Error('Batch update entry is missing synergy_id, row, or col.')
+            }
+
+            let targetRow = rowByIndex[rowIndex]
+            if (!targetRow) {
+                throw new Error(`Could not find Synergy row ${rowIndex}.`)
+            }
+
+            let matchedRow = rowBySynergyId[synergyId]
+            if (!matchedRow) {
+                throw new Error(`Could not find Synergy row for student ID ${synergyId}.`)
+            }
+
+            let matchedRowIndex = String(matchedRow.getAttribute('aria-rowindex') || '')
+            if (matchedRowIndex !== rowIndex) {
+                throw new Error(`Received ${synergyId}, row ${rowIndex} but should be row: ${matchedRowIndex}`)
+            }
+
+            let targetCell = targetRow.querySelector(`td[aria-colindex="${colIndex}"]`)
+            if (!targetCell) {
+                throw new Error(`Target column ${colIndex} was not found in row ${rowIndex}.`)
+            }
+
+            let cellWrap = targetCell.querySelector('div.asgn-cell-wrap')
+            if (!cellWrap) {
+                throw new Error(`Column ${colIndex} is not a score-entry cell.`)
+            }
+
+            cellWrap.click()
+            let input = cellWrap.querySelector('input')
+            if (!input) {
+                throw new Error(`Column ${colIndex} did not expose an input after click.`)
+            }
+
+            input.value = score
+            input.dispatchEvent(new Event('input', { bubbles: true }))
+            input.dispatchEvent(new Event('change', { bubbles: true }))
+            input.blur()
+
+            updatedCount++
+            results.push({
+                ok: true,
+                synergy_id: synergyId,
+                row: rowIndex,
+                col: colIndex
+            })
+        } catch (e) {
+            results.push({
+                ok: false,
+                synergy_id: synergyId,
+                row: rowIndex,
+                col: colIndex,
+                error: e && e.message ? e.message : String(e)
+            })
+        }
+    })
+
+    return {
+        ok: true,
+        updated_count: updatedCount,
+        failed_count: Math.max(0, results.length - updatedCount),
+        results: results
+    }
+}
+
 async function call_syn_paste(tabId, submissions, rubric_id, convert_scores_to_cgr) {
     console.log(`call_syn_paste received: tabId, submissions, rubric_id, convert_scores_to_cgr:`, tabId, submissions, rubric_id, convert_scores_to_cgr)
 
@@ -806,6 +940,32 @@ function mainListener(request, sender, sendResponse) {
             console.log('Injection failed:', e)
             sendResponse({ ok: false, error: e && e.message ? e.message : String(e) })
         });
+        return true
+    }
+
+    if (request.from == 'synergy.js' && request.to == 'background.js' && request.title == 'inject_batch') {
+        chrome.scripting.executeScript({
+            world: 'MAIN',
+            args: [Array.isArray(request.updates) ? request.updates : []],
+            target: { tabId: sender.tab.id },
+            func: bg_syn_update_batch
+        }).then((injectionResults) => {
+            let successfulResult = null
+            for (const frameResult of injectionResults) {
+                if (frameResult && frameResult.result && frameResult.result.ok) {
+                    successfulResult = frameResult.result
+                    break
+                }
+            }
+            if (!successfulResult) {
+                sendResponse({ ok: false, error: 'Batch injection completed but no editable score cell was updated.' })
+                return
+            }
+            sendResponse({ ok: true, result: successfulResult })
+        }).catch((e) => {
+            console.log('Batch injection failed:', e)
+            sendResponse({ ok: false, error: e && e.message ? e.message : String(e) })
+        })
         return true
     }
 }

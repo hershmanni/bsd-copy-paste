@@ -1,4 +1,6 @@
 const mapperStorageKey = 'synergyColumnMappings'
+const mapperMappingsByPairStorageKey = 'synergyColumnMappingsByPair'
+const manualAlignmentsByPairStorageKey = 'manualAlignmentsByPair'
 const synergyCanvasMatchStorageKey = 'synergyCanvasCourseMatches'
 const mapperSortMethodStorageKey = 'mapperSortMethod'
 const canvasAssignmentsByCourseStorageKey = 'canvasAssignmentsByCourse'
@@ -6,6 +8,7 @@ const submissionsByAssignmentByCourseStorageKey = 'submissionsByAssignmentByCour
 const canvasSubmissionSyncByCourseStorageKey = 'canvasSubmissionSyncByCourse'
 const defaultMapperSortMethod = 'canvas_recent_desc'
 const canvasSubmissionsFetchConcurrency = 6
+const canvasAssignmentsFetchConcurrency = 4
 const assignmentMatchThreshold = 0.45
 const altMatchThreshold = 0.55
 
@@ -32,7 +35,9 @@ let mapperState = {
     roundUpFrom: 0.5,
     missingPref: 'skip',
     sortMethod: defaultMapperSortMethod,
-    mappings: []
+    mappings: [],
+    mappingsByPair: {},
+    manualAlignmentsByPair: {}
 }
 
 let mappingCardCounter = 0
@@ -256,6 +261,146 @@ async function persistCanvasCourseMatchForCurrentSynergyCourse(canvasCourseId, c
     await chrome.storage.local.set({
         [synergyCanvasMatchStorageKey]: matches
     })
+}
+
+function getSynergyCanvasPairKey(synergyCourseKey, canvasCourseId) {
+    let synergyKey = String(synergyCourseKey || '').trim()
+    let canvasKey = String(canvasCourseId || '').trim()
+    if (!synergyKey || !canvasKey) {
+        return ''
+    }
+    return `${synergyKey}::${canvasKey}`
+}
+
+function getActiveSynergyCanvasPairKey() {
+    return getSynergyCanvasPairKey(mapperState.synergyCourseKey, mapperState.selectedCanvasCourseId)
+}
+
+function normalizeMappingRecord(mapping) {
+    let safe = mapping || {}
+    return {
+        col_index: String(safe.col_index || ''),
+        synergy_assignment: cleanSynergyAssignmentLabel(safe.synergy_assignment || ''),
+        synergy_alt: String(safe.synergy_alt || ''),
+        assignment_id: String(safe.assignment_id || ''),
+        rubric_id: String(safe.rubric_id || '')
+    }
+}
+
+function normalizeMappingsArray(mappings) {
+    if (!Array.isArray(mappings)) {
+        return []
+    }
+    return mappings.map((mapping) => normalizeMappingRecord(mapping))
+}
+
+function getStoredMappingsForPairKey(pairKey) {
+    let key = String(pairKey || '')
+    if (!key) {
+        return []
+    }
+    let byPair = ensurePlainObject(mapperState.mappingsByPair)
+    let stored = byPair[key]
+    return normalizeMappingsArray(stored)
+}
+
+function setStoredMappingsForPairKey(pairKey, mappings) {
+    let key = String(pairKey || '')
+    if (!key) {
+        return
+    }
+    let byPair = ensurePlainObject(mapperState.mappingsByPair)
+    byPair[key] = normalizeMappingsArray(mappings)
+    mapperState.mappingsByPair = byPair
+}
+
+function getManualSynergyAssignmentKey(synergyAssignment) {
+    let normalized = normalizeForMatch(synergyAssignment)
+    return normalized || ''
+}
+
+function getEmptyManualAlignmentSet() {
+    return {
+        assignmentBySynergy: {},
+        rowBySynergyCol: {}
+    }
+}
+
+function normalizeManualAlignmentSet(rawSet) {
+    let source = rawSet && typeof rawSet === 'object' ? rawSet : {}
+    let normalized = getEmptyManualAlignmentSet()
+
+    let assignmentBySynergy = ensurePlainObject(source.assignmentBySynergy)
+    Object.keys(assignmentBySynergy).forEach((synergyKey) => {
+        let normalizedKey = String(synergyKey || '').trim()
+        let assignmentId = String(assignmentBySynergy[synergyKey] || '').trim()
+        if (normalizedKey && assignmentId) {
+            normalized.assignmentBySynergy[normalizedKey] = assignmentId
+        }
+    })
+
+    let rowBySynergyCol = ensurePlainObject(source.rowBySynergyCol)
+    Object.keys(rowBySynergyCol).forEach((rowKey) => {
+        let row = rowBySynergyCol[rowKey]
+        let normalizedRow = normalizeMappingRecord(row)
+        let synergyKey = getManualSynergyAssignmentKey(normalizedRow.synergy_assignment)
+        let colIndex = String(normalizedRow.col_index || '')
+        let assignmentId = String(normalizedRow.assignment_id || '')
+        let rubricId = String(normalizedRow.rubric_id || '')
+        if (!synergyKey || !colIndex || !assignmentId || !rubricId) {
+            return
+        }
+        let key = `${synergyKey}::${colIndex}`
+        normalized.rowBySynergyCol[key] = {
+            col_index: colIndex,
+            synergy_assignment: normalizedRow.synergy_assignment,
+            assignment_id: assignmentId,
+            rubric_id: rubricId
+        }
+    })
+
+    return normalized
+}
+
+function getStoredManualAlignmentsForPairKey(pairKey) {
+    let key = String(pairKey || '')
+    if (!key) {
+        return getEmptyManualAlignmentSet()
+    }
+    let byPair = ensurePlainObject(mapperState.manualAlignmentsByPair)
+    return normalizeManualAlignmentSet(byPair[key])
+}
+
+function setStoredManualAlignmentsForPairKey(pairKey, manualSet) {
+    let key = String(pairKey || '')
+    if (!key) {
+        return
+    }
+    let byPair = ensurePlainObject(mapperState.manualAlignmentsByPair)
+    byPair[key] = normalizeManualAlignmentSet(manualSet)
+    mapperState.manualAlignmentsByPair = byPair
+}
+
+function syncMappingsFromCurrentPair() {
+    let pairKey = getActiveSynergyCanvasPairKey()
+    if (!pairKey) {
+        return
+    }
+
+    let pairMappings = getStoredMappingsForPairKey(pairKey)
+    if (pairMappings.length > 0) {
+        mapperState.mappings = pairMappings
+        return
+    }
+
+    // One-time migration path for older global mapping storage.
+    if (Array.isArray(mapperState.mappings) && mapperState.mappings.length > 0) {
+        setStoredMappingsForPairKey(pairKey, mapperState.mappings)
+        suppressNextMappingsRefresh = true
+        chrome.storage.local.set({
+            [mapperMappingsByPairStorageKey]: mapperState.mappingsByPair
+        })
+    }
 }
 
 function getSynergyStudentIdSet(ids) {
@@ -763,6 +908,8 @@ async function loadMapperStateFromStorage() {
         submissionsByAssignmentByCourseStorageKey,
         canvasSubmissionSyncByCourseStorageKey,
         mapperSortMethodStorageKey,
+        mapperMappingsByPairStorageKey,
+        manualAlignmentsByPairStorageKey,
         mapperStorageKey
     ])
     let sync = await chrome.storage.sync.get({
@@ -773,7 +920,9 @@ async function loadMapperStateFromStorage() {
     mapperState.roundUpFrom = normalizeRoundUpFromValue(sync.roundUpFrom, 0.5)
     mapperState.missingPref = normalizeMissingPrefValue(sync.missingPref, 'skip')
     mapperState.sortMethod = normalizeMapperSortMethod(local[mapperSortMethodStorageKey], defaultMapperSortMethod)
-    mapperState.mappings = Array.isArray(local[mapperStorageKey]) ? local[mapperStorageKey] : []
+    mapperState.mappings = normalizeMappingsArray(local[mapperStorageKey])
+    mapperState.mappingsByPair = ensurePlainObject(local[mapperMappingsByPairStorageKey])
+    mapperState.manualAlignmentsByPair = ensurePlainObject(local[manualAlignmentsByPairStorageKey])
     mapperState.canvasBaseUrl = String(local.canvasBaseUrl || '')
     mapperState.selectedCanvasCourseId = String(local.canvasCourseId || '')
     mapperState.canvasIncludeConcludedCourses = false
@@ -826,6 +975,7 @@ async function loadMapperStateFromStorage() {
             getNormalizedSubmissionsByAssignmentForAssignments(legacyAssignments, legacySubmissionsByAssignment)
     }
 
+    syncMappingsFromCurrentPair()
     updateMapperReadyUi()
 }
 
@@ -1406,47 +1556,87 @@ async function fetchCanvasCourses(baseUrl, includeConcluded = false) {
 }
 
 async function fetchCanvasAssignmentsForCourse(courseId, baseUrl) {
-    let page = 1
     let perPage = 50
-    let assignments = []
+    let rowsByPage = {}
 
-    while (true) {
-        setCanvasCourseStatus(`Fetching assignments (page ${page})...`)
-        let data = await fetchCanvasJson(
-            baseUrl,
-            `/api/v1/courses/${courseId}/assignments?include[]=rubric&order_by=due_at&per_page=${perPage}&page=${page}`
-        )
+    setCanvasCourseStatus('Fetching assignments (page 1)...')
+    let firstPageData = await fetchCanvasJson(
+        baseUrl,
+        `/api/v1/courses/${courseId}/assignments?include[]=rubric&order_by=due_at&per_page=${perPage}&page=1`
+    )
+    rowsByPage[1] = Array.isArray(firstPageData) ? firstPageData : []
 
-        if (!Array.isArray(data) || data.length === 0) {
-            break
+    if (rowsByPage[1].length === perPage) {
+        let workerCount = Math.max(1, Math.min(canvasAssignmentsFetchConcurrency, 8))
+        let nextPage = 2
+        let stopPageExclusive = Number.POSITIVE_INFINITY
+
+        async function fetchPageWorker(workerId) {
+            while (true) {
+                if (nextPage >= stopPageExclusive) {
+                    return
+                }
+
+                let page = nextPage
+                nextPage += 1
+
+                setCanvasCourseStatus(`Fetching assignments (page ${page}, worker ${workerId})...`)
+
+                let pageData = await fetchCanvasJson(
+                    baseUrl,
+                    `/api/v1/courses/${courseId}/assignments?include[]=rubric&order_by=due_at&per_page=${perPage}&page=${page}`
+                )
+                let rows = Array.isArray(pageData) ? pageData : []
+                rowsByPage[page] = rows
+
+                if (rows.length === 0) {
+                    stopPageExclusive = Math.min(stopPageExclusive, page)
+                } else if (rows.length < perPage) {
+                    stopPageExclusive = Math.min(stopPageExclusive, page + 1)
+                }
+            }
         }
 
-        data.forEach((item) => {
-            let rubric = Array.isArray(item.rubric) ? item.rubric : []
-            let usesRubric = Boolean(item.use_rubric_for_grading || rubric.length > 0)
-            let published = item.published !== false
-            if (!usesRubric || !published) {
-                return
-            }
+        let workers = []
+        for (let i = 0; i < workerCount; i++) {
+            workers.push(fetchPageWorker(i + 1))
+        }
+        await Promise.all(workers)
+    }
 
-            assignments.push({
-                id: String(item.id),
-                course_id: String(courseId),
-                name: String(item.name || ''),
-                use_rubric_for_grading: Boolean(item.use_rubric_for_grading),
-                points_possible: item.points_possible,
-                rubric: rubric,
-                due_at: item.due_at,
-                created_at: item.created_at,
-                updated_at: item.updated_at
-            })
+    let allRows = []
+    Object.keys(rowsByPage)
+        .map((pageKey) => Number(pageKey))
+        .filter((page) => Number.isFinite(page))
+        .sort((a, b) => a - b)
+        .forEach((page) => {
+            let rows = rowsByPage[page]
+            if (Array.isArray(rows) && rows.length > 0) {
+                allRows.push(...rows)
+            }
         })
 
-        if (data.length < perPage) {
-            break
+    let assignments = []
+    allRows.forEach((item) => {
+        let rubric = Array.isArray(item.rubric) ? item.rubric : []
+        let usesRubric = Boolean(item.use_rubric_for_grading || rubric.length > 0)
+        let published = item.published !== false
+        if (!usesRubric || !published) {
+            return
         }
-        page += 1
-    }
+
+        assignments.push({
+            id: String(item.id),
+            course_id: String(courseId),
+            name: String(item.name || ''),
+            use_rubric_for_grading: Boolean(item.use_rubric_for_grading),
+            points_possible: item.points_possible,
+            rubric: rubric,
+            due_at: item.due_at,
+            created_at: item.created_at,
+            updated_at: item.updated_at
+        })
+    })
 
     assignments.sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')))
     return assignments
@@ -1989,7 +2179,7 @@ async function clearMapperDataForCourseChange(selectedCourseId) {
     let safeCourseId = String(selectedCourseId || '')
 
     setActiveCourseDataFromCache(safeCourseId)
-    mapperState.mappings = []
+    syncMappingsFromCurrentPair()
 
     let firstSubmissions = getFirstSubmissionsForAssignments(mapperState.assignments, mapperState.submissionsByAssignment)
     suppressNextMappingsRefresh = true
@@ -1998,7 +2188,7 @@ async function clearMapperDataForCourseChange(selectedCourseId) {
         assignments: mapperState.assignments,
         submissionsByAssignment: mapperState.submissionsByAssignment,
         submissions: firstSubmissions,
-        [mapperStorageKey]: []
+        [mapperStorageKey]: normalizeMappingsArray(mapperState.mappings)
     })
 
     $('#bsd-map-cards').html('')
@@ -2020,7 +2210,11 @@ async function onCanvasCourseSelectionChanged(forceAssignmentsRefresh = false) {
 
     if (courseChanged) {
         await clearMapperDataForCourseChange(selectedCourseId)
-        setMapperStatus('Canvas course changed. Existing auto-matches cleared.')
+        if (Array.isArray(mapperState.mappings) && mapperState.mappings.length > 0) {
+            setMapperStatus(`Canvas course changed. Restored ${mapperState.mappings.length} saved alignment row(s) for this course pair.`)
+        } else {
+            setMapperStatus('Canvas course changed. No saved alignments found for this course pair.')
+        }
     } else {
         mapperState.selectedCanvasCourseId = selectedCourseId
         await chrome.storage.local.set({ canvasCourseId: selectedCourseId })
@@ -3197,11 +3391,13 @@ function createMapperCardRow(card, rowData = {}) {
     canvasAltSelect.on('change', () => {
         clearInlineMappingErrors(card)
         updateCardPasteStates(card)
+        rememberManualRowAlignment(row)
         persistMappingsFromUi()
     })
 
     row.find('.bsd-row-remove').on('click', () => {
         clearInlineMappingErrors(card)
+        forgetManualRowAlignment(row)
         row.remove()
         if (getRowsForCard(card).length === 0) {
             createMapperCardRow(card, getSuggestedRowSeedForCard(card))
@@ -3294,6 +3490,7 @@ function createMapperCard(cardData = {}) {
             autoMatchCanvasAltForRow($(rowEl), false)
         })
         updateCardPasteStates(card)
+        rememberManualAssignmentAlignment(card)
         persistMappingsFromUi()
     })
 
@@ -3305,6 +3502,7 @@ function createMapperCard(cardData = {}) {
     })
 
     card.find('.bsd-card-remove').on('click', () => {
+        forgetManualAssignmentAlignment(card)
         card.remove()
         persistMappingsFromUi()
     })
@@ -3316,8 +3514,16 @@ function createMapperCard(cardData = {}) {
             return
         }
 
+        let tab = await resolveSynergyTab()
+        if (!tab) {
+            setMapperStatus('Open a Synergy gradebook tab before pasting.', true)
+            return
+        }
+        mapperState.activeTabId = tab.id
+        mapperState.activeTabUrl = tab.url || ''
+
         for (let i = 0; i < rows.length; i++) {
-            await pasteSingleRow($(rows[i]))
+            await pasteSingleRow($(rows[i]), tab)
         }
     })
 
@@ -3403,11 +3609,26 @@ function collectMappingsFromUi() {
     return mappings
 }
 
+function persistMappingsToStorage(mappings, includePairStore = true) {
+    let normalized = normalizeMappingsArray(mappings)
+    mapperState.mappings = normalized
+
+    let payload = {
+        [mapperStorageKey]: normalized
+    }
+    let pairKey = getActiveSynergyCanvasPairKey()
+    if (includePairStore && pairKey) {
+        setStoredMappingsForPairKey(pairKey, normalized)
+        payload[mapperMappingsByPairStorageKey] = mapperState.mappingsByPair
+    }
+
+    suppressNextMappingsRefresh = true
+    chrome.storage.local.set(payload)
+}
+
 function persistMappingsFromUi() {
     let mappings = collectMappingsFromUi()
-    mapperState.mappings = mappings
-    suppressNextMappingsRefresh = true
-    chrome.storage.local.set({ [mapperStorageKey]: mappings })
+    persistMappingsToStorage(mappings, true)
 }
 
 function clearMapperMappings(showStatus = true) {
@@ -3430,6 +3651,230 @@ function getMappingFromRow(row) {
         assignment_id: getCardCanvasAssignment(card),
         rubric_id: row.find('.bsd-canvas-alt-select').val()
     }
+}
+
+function selectHasOptionValue(selectEl, value) {
+    let wanted = String(value || '')
+    if (!wanted) {
+        return false
+    }
+    return selectEl.find('option').filter((_, optionEl) => String($(optionEl).val()) === wanted).length > 0
+}
+
+function getManualAlignmentDataForCurrentPair() {
+    return getStoredManualAlignmentsForPairKey(getActiveSynergyCanvasPairKey())
+}
+
+function persistManualAlignmentDataForCurrentPair(manualSet) {
+    let pairKey = getActiveSynergyCanvasPairKey()
+    if (!pairKey) {
+        return
+    }
+    setStoredManualAlignmentsForPairKey(pairKey, manualSet)
+    chrome.storage.local.set({
+        [manualAlignmentsByPairStorageKey]: mapperState.manualAlignmentsByPair
+    })
+}
+
+function rememberManualAssignmentAlignment(card) {
+    let synergyAssignment = getCardSynergyAssignment(card)
+    let synergyKey = getManualSynergyAssignmentKey(synergyAssignment)
+    if (!synergyKey) {
+        return
+    }
+
+    let assignmentId = String(getCardCanvasAssignment(card) || '')
+    let manualSet = getManualAlignmentDataForCurrentPair()
+    if (assignmentId) {
+        manualSet.assignmentBySynergy[synergyKey] = assignmentId
+    } else {
+        delete manualSet.assignmentBySynergy[synergyKey]
+    }
+
+    // When assignment changes, prune stale row overrides tied to other assignment IDs.
+    Object.keys(manualSet.rowBySynergyCol).forEach((rowKey) => {
+        if (!rowKey.startsWith(`${synergyKey}::`)) {
+            return
+        }
+        let rowOverride = manualSet.rowBySynergyCol[rowKey]
+        let rowAssignmentId = String(rowOverride && rowOverride.assignment_id ? rowOverride.assignment_id : '')
+        if (!assignmentId || rowAssignmentId !== assignmentId) {
+            delete manualSet.rowBySynergyCol[rowKey]
+        }
+    })
+
+    persistManualAlignmentDataForCurrentPair(manualSet)
+}
+
+function rememberManualRowAlignment(row) {
+    let mapping = getMappingFromRow(row)
+    let synergyKey = getManualSynergyAssignmentKey(mapping.synergy_assignment)
+    let colIndex = String(mapping.col_index || '')
+    if (!synergyKey || !colIndex) {
+        return
+    }
+
+    let rowKey = `${synergyKey}::${colIndex}`
+    let manualSet = getManualAlignmentDataForCurrentPair()
+    let assignmentId = String(mapping.assignment_id || '')
+    let rubricId = String(mapping.rubric_id || '')
+
+    if (assignmentId) {
+        manualSet.assignmentBySynergy[synergyKey] = assignmentId
+    }
+
+    if (assignmentId && rubricId) {
+        manualSet.rowBySynergyCol[rowKey] = {
+            col_index: colIndex,
+            synergy_assignment: String(mapping.synergy_assignment || ''),
+            assignment_id: assignmentId,
+            rubric_id: rubricId
+        }
+    } else {
+        delete manualSet.rowBySynergyCol[rowKey]
+    }
+
+    persistManualAlignmentDataForCurrentPair(manualSet)
+}
+
+function forgetManualRowAlignment(row) {
+    let mapping = getMappingFromRow(row)
+    let synergyKey = getManualSynergyAssignmentKey(mapping.synergy_assignment)
+    let colIndex = String(mapping.col_index || '')
+    if (!synergyKey || !colIndex) {
+        return
+    }
+
+    let rowKey = `${synergyKey}::${colIndex}`
+    let manualSet = getManualAlignmentDataForCurrentPair()
+    delete manualSet.rowBySynergyCol[rowKey]
+    persistManualAlignmentDataForCurrentPair(manualSet)
+}
+
+function forgetManualAssignmentAlignment(card) {
+    let synergyKey = getManualSynergyAssignmentKey(getCardSynergyAssignment(card))
+    if (!synergyKey) {
+        return
+    }
+
+    let manualSet = getManualAlignmentDataForCurrentPair()
+    delete manualSet.assignmentBySynergy[synergyKey]
+    Object.keys(manualSet.rowBySynergyCol).forEach((rowKey) => {
+        if (rowKey.startsWith(`${synergyKey}::`)) {
+            delete manualSet.rowBySynergyCol[rowKey]
+        }
+    })
+    persistManualAlignmentDataForCurrentPair(manualSet)
+}
+
+function applyStoredManualAlignmentsForCurrentPair(shouldPersistMappings = false) {
+    let pairKey = getActiveSynergyCanvasPairKey()
+    if (!pairKey) {
+        return { assignmentCount: 0, rowCount: 0 }
+    }
+
+    let manualSet = getStoredManualAlignmentsForPairKey(pairKey)
+    let assignmentOverrides = ensurePlainObject(manualSet.assignmentBySynergy)
+    let rowOverrides = ensurePlainObject(manualSet.rowBySynergyCol)
+    if (Object.keys(assignmentOverrides).length === 0 && Object.keys(rowOverrides).length === 0) {
+        return { assignmentCount: 0, rowCount: 0 }
+    }
+
+    let assignmentCount = 0
+    let rowCount = 0
+
+    getMapperCards().each((_, cardEl) => {
+        let card = $(cardEl)
+        let synergyKey = getManualSynergyAssignmentKey(getCardSynergyAssignment(card))
+        if (!synergyKey) {
+            return
+        }
+
+        let canvasAssignSelect = card.find('.bsd-card-canvas-assign-select')
+        let wantedAssignmentId = String(assignmentOverrides[synergyKey] || '')
+
+        let rowOverrideList = Object.values(rowOverrides).filter((rowOverride) => {
+            let override = rowOverride && typeof rowOverride === 'object' ? rowOverride : {}
+            let overrideKey = getManualSynergyAssignmentKey(override.synergy_assignment)
+            return overrideKey === synergyKey
+        })
+        if (wantedAssignmentId && rowOverrideList.length > 0) {
+            let hasMatchingOverride = rowOverrideList.some((rowOverride) => {
+                let override = rowOverride && typeof rowOverride === 'object' ? rowOverride : {}
+                return String(override.assignment_id || '') === wantedAssignmentId
+            })
+            if (!hasMatchingOverride) {
+                wantedAssignmentId = ''
+            }
+        }
+        if (!wantedAssignmentId && rowOverrideList.length > 0) {
+            let counts = {}
+            rowOverrideList.forEach((rowOverride) => {
+                let override = rowOverride && typeof rowOverride === 'object' ? rowOverride : {}
+                let assignmentId = String(override.assignment_id || '')
+                if (!assignmentId) {
+                    return
+                }
+                counts[assignmentId] = Number(counts[assignmentId] || 0) + 1
+            })
+            wantedAssignmentId = Object.keys(counts).sort((a, b) => Number(counts[b]) - Number(counts[a]))[0] || ''
+        }
+        if (wantedAssignmentId) {
+            rowOverrideList = rowOverrideList.filter((rowOverride) => {
+                let override = rowOverride && typeof rowOverride === 'object' ? rowOverride : {}
+                return String(override.assignment_id || '') === wantedAssignmentId
+            })
+        }
+
+        if (
+            wantedAssignmentId &&
+            selectHasOptionValue(canvasAssignSelect, wantedAssignmentId) &&
+            String(canvasAssignSelect.val() || '') !== wantedAssignmentId
+        ) {
+            canvasAssignSelect.val(wantedAssignmentId)
+            updateCanvasUpdatedCell(card, wantedAssignmentId)
+            refreshCardRowCanvasAltOptions(card)
+            assignmentCount += 1
+        }
+
+        rowOverrideList.forEach((rowOverride) => {
+            let override = rowOverride && typeof rowOverride === 'object' ? rowOverride : {}
+            let colIndex = String(override.col_index || '')
+            let rubricId = String(override.rubric_id || '')
+            if (!colIndex || !rubricId) {
+                return
+            }
+
+            let row = getRowsForCard(card).filter((_, rowEl) => {
+                return String($(rowEl).find('.bsd-syn-alt-select').val() || '') === colIndex
+            }).first()
+            if (row.length === 0) {
+                createMapperCardRow(card, { col_index: colIndex })
+                row = getRowsForCard(card).filter((_, rowEl) => {
+                    return String($(rowEl).find('.bsd-syn-alt-select').val() || '') === colIndex
+                }).first()
+            }
+            if (row.length === 0) {
+                return
+            }
+
+            let rowCanvasAltSelect = row.find('.bsd-canvas-alt-select')
+            if (
+                selectHasOptionValue(rowCanvasAltSelect, rubricId) &&
+                String(rowCanvasAltSelect.val() || '') !== rubricId
+            ) {
+                rowCanvasAltSelect.val(rubricId)
+                rowCount += 1
+            }
+        })
+
+        updateCardPasteStates(card)
+    })
+
+    if (shouldPersistMappings) {
+        persistMappingsFromUi()
+    }
+    return { assignmentCount, rowCount }
 }
 
 function clearInlineMappingErrors(card) {
@@ -3541,7 +3986,7 @@ function updateCardPasteStates(card) {
     updateCourseStepUi()
 }
 
-async function pasteSingleRow(row) {
+async function pasteSingleRow(row, resolvedTab = null) {
     let status = row.find('.bsd-row-status')
     let mapping = getMappingFromRow(row)
     let card = getCardFromRow(row)
@@ -3564,7 +4009,10 @@ async function pasteSingleRow(row) {
 
     try {
         clearInlineMappingErrors(card)
-        let tab = await resolveSynergyTab()
+        let tab = resolvedTab
+        if (!tab) {
+            tab = await resolveSynergyTab()
+        }
         if (!tab) {
             throw new Error('Open a Synergy gradebook tab before pasting.')
         }
@@ -3601,7 +4049,7 @@ async function pasteAllMappings() {
 
     setMapperStatus(`Pasting ${rows.length} mapping row(s)...`)
     for (let i = 0; i < rows.length; i++) {
-        await pasteSingleRow($(rows[i]))
+        await pasteSingleRow($(rows[i]), tab)
     }
     setMapperStatus(`Paste run complete for ${rows.length} mapping row(s).`)
 }
@@ -3651,9 +4099,14 @@ async function refreshMapperPanel(showStatus = true) {
             : []
         updateSynergyCourseContextFromResponse(context)
         mapperState.viewMode = context.viewMode || 'view_by_assignment'
+        syncMappingsFromCurrentPair()
 
         renderMappingsFromState()
         autoMatchAllMappings(false, false, false)
+        let appliedManual = applyStoredManualAlignmentsForCurrentPair(false)
+        if ((appliedManual.assignmentCount + appliedManual.rowCount) > 0) {
+            persistMappingsFromUi()
+        }
 
         if (showStatus) {
             let fetchedCount = getFetchedAssignmentsForMapper().length
@@ -3713,6 +4166,12 @@ async function runRefreshWorkflow() {
 
     clearMapperMappings(false)
     autoMatchAllMappings(true, true, true)
+    let appliedManual = applyStoredManualAlignmentsForCurrentPair(true)
+    if ((appliedManual.assignmentCount + appliedManual.rowCount) > 0) {
+        setMapperStatus(
+            `Refresh complete. Re-applied ${appliedManual.assignmentCount} manual assignment and ${appliedManual.rowCount} manual target alignment(s).`
+        )
+    }
 }
 
 function setInstructionHoverStep(stepNumber = 0) {
@@ -3765,6 +4224,12 @@ function wireUiEvents() {
 
             await refreshMapperPanel(false)
             autoMatchAllMappings(true, true, true)
+            let appliedManual = applyStoredManualAlignmentsForCurrentPair(true)
+            if ((appliedManual.assignmentCount + appliedManual.rowCount) > 0) {
+                setMapperStatus(
+                    `Auto-match complete. Re-applied ${appliedManual.assignmentCount} manual assignment and ${appliedManual.rowCount} manual target alignment(s).`
+                )
+            }
         } finally {
             suppressLocalRefreshEvents = false
         }
@@ -3820,7 +4285,10 @@ async function initializeCanvasSourceUi() {
 function wireBackgroundEvents() {
     chrome.storage.onChanged.addListener((changes, areaName) => {
         if (areaName === 'local') {
-            let mappingChanged = Boolean(changes[mapperStorageKey])
+            let mappingChanged = Boolean(
+                changes[mapperStorageKey] ||
+                changes[mapperMappingsByPairStorageKey]
+            )
             if (mappingChanged && suppressNextMappingsRefresh) {
                 suppressNextMappingsRefresh = false
                 return
