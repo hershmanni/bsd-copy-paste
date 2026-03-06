@@ -1205,7 +1205,7 @@ function updatePrimaryRefreshButtonUi() {
     let isFetchMode = !hasFetched
 
     button
-        .text(isFetchMode ? 'Fetch Canvas Scores' : 'Refresh')
+        .text('Refresh')
         .toggleClass('bsd-fetch-mode', isFetchMode)
         .attr(
             'title',

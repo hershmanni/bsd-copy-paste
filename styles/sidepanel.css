@@ -39,6 +39,16 @@
     letter-spacing: 0.3px;
 }
 
+#bsd-sidepanel .bsd-panel-head-link {
+    color: #b4f7fe;
+    text-decoration: none;
+    font-weight: 600;
+}
+
+#bsd-sidepanel .bsd-panel-head-link:hover {
+    text-decoration: underline;
+}
+
 #bsd-sidepanel .bsd-panel-head .bsd-panel-head-note {
     margin: 0;
     width: 100%;
