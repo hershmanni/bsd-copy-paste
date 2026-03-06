@@ -9,6 +9,7 @@ const canvasSubmissionSyncByCourseStorageKey = 'canvasSubmissionSyncByCourse'
 const defaultMapperSortMethod = 'canvas_recent_desc'
 const canvasSubmissionsFetchConcurrency = 6
 const canvasAssignmentsFetchConcurrency = 4
+const canvasCourseRosterMatchConcurrency = 6
 const assignmentMatchThreshold = 0.45
 const altMatchThreshold = 0.55
 
@@ -631,7 +632,10 @@ async function copyTextToClipboard(text) {
 }
 
 function getSelectedCanvasAssignmentLabel(selectEl) {
-    let label = normalizeHeaderText(selectEl.find('option:selected').text())
+    let selectedOption = selectEl.find('option:selected')
+    let label = normalizeHeaderText(
+        selectedOption.attr('data-full-label') || selectedOption.text()
+    )
     if (!label || label.toLowerCase() === 'choose canvas assignment') {
         return ''
     }
@@ -1217,11 +1221,8 @@ function updateCanvasActionButtons() {
     let hasAssignments = getCachedAssignmentsForSelectedCourse().length > 0
 
     $('#bsd-load-canvas-courses').prop('disabled', controlsDisabled)
-    $('#bsd-canvas-include-concluded').prop('disabled', controlsDisabled)
-    $('#bsd-canvas-course-filter').prop('disabled', controlsDisabled)
     $('#bsd-canvas-course-select').prop('disabled', controlsDisabled)
     $('#bsd-refresh-data').prop('disabled', !hasCourse || controlsDisabled)
-    $('#bsd-stop-canvas-fetch').prop('disabled', !canvasFetchInFlight)
     $('#bsd-copy-canvas-assignment').prop('disabled', controlsDisabled || !hasAssignments)
     $('#bsd-toggle-assignment-helper').prop('disabled', controlsDisabled || !hasAssignments)
     updateCopyCanvasAssignmentHelperUi()
@@ -1712,60 +1713,151 @@ function getCanvasUserCourseMatchIds(user) {
     return loginId ? [loginId] : []
 }
 
-async function fetchCanvasStudentSampleForCourse(courseId, baseUrl, sampleSize = 10) {
-    let users = await fetchCanvasJson(
-        baseUrl,
-        `/api/v1/courses/${courseId}/users?enrollment_type[]=student&per_page=${sampleSize}&page=1`
-    )
+async function fetchCanvasStudentMatchIdsForCourse(courseId, baseUrl) {
+    let page = 1
+    let perPage = 100
+    let matchIds = []
+    let seen = new Set()
 
-    if (!Array.isArray(users) || users.length === 0) {
-        return []
+    while (true) {
+        let users = await fetchCanvasJson(
+            baseUrl,
+            `/api/v1/courses/${courseId}/users?enrollment_type[]=student&per_page=${perPage}&page=${page}`
+        )
+
+        if (!Array.isArray(users) || users.length === 0) {
+            break
+        }
+
+        users.forEach((user) => {
+            let ids = getCanvasUserCourseMatchIds(user)
+            ids.forEach((id) => {
+                if (!seen.has(id)) {
+                    seen.add(id)
+                    matchIds.push(id)
+                }
+            })
+        })
+
+        if (users.length < perPage) {
+            break
+        }
+        page += 1
     }
 
-    let sampleIds = []
-    let seen = new Set()
-    users.forEach((user) => {
-        let ids = getCanvasUserCourseMatchIds(user)
-        ids.forEach((id) => {
-            if (!seen.has(id)) {
-                seen.add(id)
-                sampleIds.push(id)
-            }
-        })
-    })
-    return sampleIds
+    return matchIds
 }
 
 async function filterCanvasCoursesBySynergyRoster(courses, baseUrl, synergyStudentIds) {
     if (!Array.isArray(courses) || courses.length === 0) {
-        return []
+        return {
+            courses: [],
+            matchCountsByCourseId: {},
+            bestMatchedCourseId: '',
+            bestMatchedCourseCount: 0
+        }
     }
 
     let synergyIdSet = getSynergyStudentIdSet(synergyStudentIds)
     if (synergyIdSet.size === 0) {
-        return courses
-    }
-
-    let matchedCourses = []
-    for (let i = 0; i < courses.length; i++) {
-        let course = courses[i]
-        setCanvasCourseStatus(`Matching course roster ${i + 1}/${courses.length}: ${course.name}`)
-
-        try {
-            let sampleIds = await fetchCanvasStudentSampleForCourse(course.id, baseUrl, 10)
-            let hasMatch = sampleIds.some((id) => synergyIdSet.has(id))
-            if (hasMatch) {
-                matchedCourses.push(course)
-            }
-        } catch (e) {
-            if (isAbortError(e)) {
-                throw e
-            }
-            // skip courses we cannot sample and continue matching.
+        return {
+            courses: courses.slice(),
+            matchCountsByCourseId: {},
+            bestMatchedCourseId: '',
+            bestMatchedCourseCount: 0
         }
     }
 
-    return matchedCourses
+    let matchCountsByCourseId = {}
+    let matchedCourseRows = []
+    let nextCourseIndex = 0
+    let completedCourses = 0
+    let activeCourses = 0
+    let workerCount = Math.max(1, Math.min(canvasCourseRosterMatchConcurrency, courses.length))
+
+    function updateCourseRosterMatchStatus(activeCourseName = '') {
+        let label = `Matching Canvas rosters: ${completedCourses}/${courses.length} checked`
+        if (activeCourses > 0) {
+            label += `, ${activeCourses} in progress`
+        }
+        if (activeCourseName) {
+            label += `: ${activeCourseName}`
+        }
+        setCanvasCourseStatus(label)
+    }
+
+    async function matchCourseWorker() {
+        while (nextCourseIndex < courses.length) {
+            let queueIndex = nextCourseIndex
+            nextCourseIndex += 1
+
+            let course = courses[queueIndex]
+            if (!course || !course.id) {
+                completedCourses += 1
+                updateCourseRosterMatchStatus()
+                continue
+            }
+
+            activeCourses += 1
+            updateCourseRosterMatchStatus(course.name)
+
+            try {
+                let matchIds = await fetchCanvasStudentMatchIdsForCourse(course.id, baseUrl)
+                let matchCount = 0
+                matchIds.forEach((id) => {
+                    if (synergyIdSet.has(id)) {
+                        matchCount += 1
+                    }
+                })
+
+                matchCountsByCourseId[String(course.id)] = matchCount
+                if (matchCount > 0) {
+                    matchedCourseRows.push({
+                        course: {
+                            ...course,
+                            student_match_count: matchCount
+                        },
+                        matchCount: matchCount
+                    })
+                }
+            } catch (e) {
+                if (isAbortError(e)) {
+                    throw e
+                }
+                matchCountsByCourseId[String(course.id)] = 0
+                // Skip courses we cannot inspect and continue matching the rest.
+            } finally {
+                activeCourses = Math.max(0, activeCourses - 1)
+                completedCourses += 1
+                updateCourseRosterMatchStatus()
+            }
+        }
+    }
+
+    await Promise.all(Array.from({ length: workerCount }, () => matchCourseWorker()))
+
+    matchedCourseRows.sort((a, b) => {
+        if (b.matchCount !== a.matchCount) {
+            return b.matchCount - a.matchCount
+        }
+        let nameCompare = String(a.course && a.course.name ? a.course.name : '').localeCompare(
+            String(b.course && b.course.name ? b.course.name : '')
+        )
+        if (nameCompare !== 0) {
+            return nameCompare
+        }
+        return String(a.course && a.course.term_name ? a.course.term_name : '').localeCompare(
+            String(b.course && b.course.term_name ? b.course.term_name : '')
+        )
+    })
+
+    let bestMatchedCourse = matchedCourseRows.length > 0 ? matchedCourseRows[0] : null
+    return {
+        courses: matchedCourseRows.map((row) => row.course),
+        matchCountsByCourseId: matchCountsByCourseId,
+        bestMatchedCourseId: bestMatchedCourse && bestMatchedCourse.course ? String(bestMatchedCourse.course.id || '') : '',
+        bestMatchedCourseCount: bestMatchedCourse ? bestMatchedCourse.matchCount : 0
+    }
 }
 
 async function fetchCanvasCourses(baseUrl, includeConcluded = false) {
@@ -2039,14 +2131,18 @@ async function loadCanvasCourses(forceFromTabs = false, options = {}) {
         let baseUrl = await ensureCanvasBaseUrl(forceFromTabs)
         let allCourses = await fetchCanvasCourses(baseUrl, includeConcluded)
         let courses = allCourses
+        let rosterMatchResult = null
         let rosterFilterApplied = false
         let usedStoredMatch = false
+        let synergyRosterSize = 0
 
         let synergyStudentIds = []
         try {
             synergyStudentIds = await getSynergyStudentIdsForCourseFilter()
+            synergyRosterSize = getSynergyStudentIdSet(synergyStudentIds).size
         } catch (e) {
             synergyStudentIds = []
+            synergyRosterSize = 0
         }
 
         let storedMatch = getStoredCanvasCourseMatchForCurrentSynergyCourse()
@@ -2057,13 +2153,15 @@ async function loadCanvasCourses(forceFromTabs = false, options = {}) {
 
         if (synergyStudentIds.length > 0 && !usedStoredMatch) {
             rosterFilterApplied = true
-            courses = await filterCanvasCoursesBySynergyRoster(allCourses, baseUrl, synergyStudentIds)
+            rosterMatchResult = await filterCanvasCoursesBySynergyRoster(allCourses, baseUrl, synergyStudentIds)
+            courses = rosterMatchResult.courses
         } else if (synergyStudentIds.length > 0 && usedStoredMatch) {
             let storedExists = allCourses.some((course) => String(course.id) === storedCanvasCourseId)
             if (!storedExists) {
                 usedStoredMatch = false
                 rosterFilterApplied = true
-                courses = await filterCanvasCoursesBySynergyRoster(allCourses, baseUrl, synergyStudentIds)
+                rosterMatchResult = await filterCanvasCoursesBySynergyRoster(allCourses, baseUrl, synergyStudentIds)
+                courses = rosterMatchResult.courses
             }
         }
 
@@ -2073,8 +2171,13 @@ async function loadCanvasCourses(forceFromTabs = false, options = {}) {
         if (usedStoredMatch && storedCanvasCourseId && courses.some((course) => String(course.id) === storedCanvasCourseId)) {
             selectedFromStoredMatch = storedCanvasCourseId
         }
+        let bestMatchedCourseId = String(
+            rosterMatchResult && rosterMatchResult.bestMatchedCourseId ? rosterMatchResult.bestMatchedCourseId : ''
+        )
         if (selectedFromStoredMatch) {
             mapperState.selectedCanvasCourseId = selectedFromStoredMatch
+        } else if (bestMatchedCourseId && courses.some((course) => String(course.id) === bestMatchedCourseId)) {
+            mapperState.selectedCanvasCourseId = bestMatchedCourseId
         } else if (
             !mapperState.selectedCanvasCourseId ||
             !courses.find((course) => String(course.id) === String(mapperState.selectedCanvasCourseId))
@@ -2104,7 +2207,24 @@ async function loadCanvasCourses(forceFromTabs = false, options = {}) {
                 let nameSuffix = storedCanvasName ? ` (${storedCanvasName})` : ''
                 filterText = ` Restored saved Canvas match for this Synergy class${nameSuffix}.`
             } else if (rosterFilterApplied) {
-                filterText = ` Matched ${courses.length}/${allCourses.length} course(s) to current Synergy roster sample.`
+                let selectedCourseId = String(mapperState.selectedCanvasCourseId || '')
+                let selectedCourseName = getCanvasCourseNameForId(selectedCourseId, courses)
+                let selectedMatchCount = Number(
+                    rosterMatchResult &&
+                    rosterMatchResult.matchCountsByCourseId &&
+                    Number.isFinite(rosterMatchResult.matchCountsByCourseId[selectedCourseId])
+                        ? rosterMatchResult.matchCountsByCourseId[selectedCourseId]
+                        : 0
+                )
+                let matchPercent = synergyRosterSize > 0
+                    ? Math.round((selectedMatchCount / synergyRosterSize) * 100)
+                    : 0
+
+                if (selectedCourseName && synergyRosterSize > 0) {
+                    filterText = ` ${selectedCourseName} had ${selectedMatchCount}/${synergyRosterSize} students matched (${matchPercent}%).`
+                } else {
+                    filterText = ` Matched ${courses.length}/${allCourses.length} course(s) to the current Synergy roster.`
+                }
             } else if (allCourses.length > 0) {
                 filterText = ' Synergy roster matching unavailable; showing all Canvas courses.'
             }
@@ -2123,7 +2243,7 @@ async function loadCanvasCourses(forceFromTabs = false, options = {}) {
 
             let noCoursesText = includeConcluded ? 'No active or archived Canvas courses found.' : 'No active Canvas courses found.'
             if (allCourses.length > 0 && rosterFilterApplied) {
-                noCoursesText = 'No Canvas courses matched at least one student from the current Synergy class sample.'
+                noCoursesText = 'No Canvas courses matched any students from the current Synergy class.'
             }
             endCanvasFetch(noCoursesText, true, 'course')
         }
@@ -3236,7 +3356,9 @@ function buildSynergyAssignmentOptions(selectEl, selectedSynergyAssignment) {
     assignments.forEach((assignmentLabel) => {
         let option = $('<option></option>')
             .attr('value', assignmentLabel)
-            .text(assignmentLabel)
+            .attr('title', assignmentLabel)
+            .attr('data-full-label', assignmentLabel)
+            .text(truncateText(assignmentLabel, 28))
         if (resolvedSelected && resolvedSelected === assignmentLabel) {
             option.attr('selected', true)
         }
@@ -3266,7 +3388,9 @@ function buildSynergyAltOptions(selectEl, selectedSynergyAssignment, selectedCol
             .attr('value', column.col_index)
             .attr('data-alt', displayAlt)
             .attr('data-header-id', String(column.header_id || ''))
-            .text(displayAlt)
+            .attr('title', displayAlt)
+            .attr('data-full-label', displayAlt)
+            .text(truncateText(displayAlt, 28))
         if (String(selectedColIndex) === String(column.col_index)) {
             option.attr('selected', true)
         }
@@ -3281,6 +3405,8 @@ function buildSynergyAltOptions(selectEl, selectedSynergyAssignment, selectedCol
                 .attr('value', selected)
                 .attr('data-alt', `Column ${selected}`)
                 .attr('data-header-id', '')
+                .attr('title', `[${selected}] Column ${selected}`)
+                .attr('data-full-label', `[${selected}] Column ${selected}`)
                 .attr('selected', true)
                 .text(`[${selected}] Column ${selected}`)
         )
@@ -3293,9 +3419,12 @@ function buildCanvasAssignmentOptions(selectEl, selectedAssignId) {
     selectEl.append('<option value="">Choose Canvas assignment</option>')
     assignments.forEach((assignment) => {
         let key = String(assignment.id)
+        let label = String(assignment.name || key)
         let option = $('<option></option>')
             .attr('value', key)
-            .text(String(assignment.name || key))
+            .attr('title', label)
+            .attr('data-full-label', label)
+            .text(truncateText(label, 28))
         if (String(selectedAssignId) === key) {
             option.attr('selected', true)
         }
@@ -3333,7 +3462,8 @@ function buildCanvasAltOptions(selectEl, assignmentId, selectedRubricId) {
         let option = $('<option></option>')
             .attr('value', String(rubric.id))
             .attr('title', optionTitle)
-            .text(optionLabel)
+            .attr('data-full-label', optionLabel)
+            .text(truncateText(optionLabel, 28))
         if (String(selectedRubricId) === String(rubric.id)) {
             option.attr('selected', true)
         }
@@ -3806,11 +3936,9 @@ function createMapperCardRow(card, rowData = {}) {
     let row = $(`
         <div class="bsd-map-row" data-row-id="${mappingRowCounter}">
             <div class="bsd-row-field bsd-row-field-synergy">
-                <span class="bsd-inline-label">Synergy:</span>
                 <select class="bsd-syn-alt-select"></select>
             </div>
             <div class="bsd-row-field bsd-row-field-canvas">
-                <span class="bsd-inline-label">Canvas:</span>
                 <select class="bsd-canvas-alt-select"></select>
             </div>
             <div class="bsd-row-buttons">
@@ -3876,21 +4004,20 @@ function createMapperCard(cardData = {}) {
 
     let card = $(`
         <div class="bsd-map-card" data-card-id="${mappingCardCounter}">
-            <div class="bsd-card-head">
-                <div class="bsd-card-actions">
-                    <button class="bsd-card-add-alt" type="button">Add ALT</button>
-                    <button class="bsd-card-paste" type="button">Paste Assignment</button>
-                    <button class="bsd-card-remove bsd-x-remove" type="button" title="Remove assignment">x</button>
-                </div>
-            </div>
             <div class="bsd-assignment-wrap">
-                <div class="bsd-standards-title">Assignment</div>
+                <div class="bsd-section-head bsd-assignment-head">
+                    <div class="bsd-standards-title">Assignment</div>
+                </div>
                 <div class="bsd-card-assignment-row">
                     <div class="bsd-card-assignment-field bsd-card-assignment-field-synergy">
                         <select class="bsd-card-syn-assign-select"></select>
                     </div>
                     <div class="bsd-card-assignment-field bsd-card-assignment-field-canvas">
                         <select class="bsd-card-canvas-assign-select"></select>
+                    </div>
+                    <div class="bsd-card-assignment-actions">
+                        <button class="bsd-card-paste" type="button">Paste</button>
+                        <button class="bsd-card-remove bsd-x-remove" type="button" title="Remove assignment">x</button>
                     </div>
                 </div>
                 <div class="bsd-card-assignment-meta-row">
@@ -3903,11 +4030,25 @@ function createMapperCard(cardData = {}) {
                         <span class="bsd-inline-label">last updated:</span>
                         <div class="bsd-canvas-updated">-</div>
                     </div>
+                    <div class="bsd-card-assignment-actions bsd-card-assignment-actions-placeholder" aria-hidden="true">
+                        <button class="bsd-card-paste" type="button" tabindex="-1">Paste</button>
+                        <button class="bsd-card-remove bsd-x-remove" type="button" tabindex="-1">x</button>
+                    </div>
                 </div>
             </div>
             <div class="bsd-standards-wrap">
-                <div class="bsd-standards-title">Standards</div>
+                <div class="bsd-section-head bsd-standards-head">
+                    <div class="bsd-standards-title">Standards</div>
+                </div>
                 <div class="bsd-card-rows"></div>
+                <div class="bsd-card-rows-footer">
+                    <span class="bsd-inline-label bsd-card-rows-footer-synergy-label">Synergy</span>
+                    <span class="bsd-inline-label bsd-card-rows-footer-canvas-label">Canvas</span>
+                    <div class="bsd-row-buttons bsd-row-buttons-placeholder" aria-hidden="true">
+                        <button class="bsd-row-paste" type="button" tabindex="-1">Paste</button>
+                        <button class="bsd-row-remove bsd-x-remove" type="button" tabindex="-1">x</button>
+                    </div>
+                </div>
             </div>
         </div>
     `)
@@ -3954,13 +4095,6 @@ function createMapperCard(cardData = {}) {
         })
         updateCardPasteStates(card)
         rememberManualAssignmentAlignment(card)
-        persistMappingsFromUi()
-    })
-
-    card.find('.bsd-card-add-alt').on('click', () => {
-        clearInlineMappingErrors(card)
-        createMapperCardRow(card, getSuggestedRowSeedForCard(card))
-        updateCardPasteStates(card)
         persistMappingsFromUi()
     })
 
@@ -4838,10 +4972,6 @@ function wireUiEvents() {
 
     $('#bsd-canvas-course-select').on('change', async () => {
         await onCanvasCourseSelectionChanged(false)
-    })
-
-    $('#bsd-stop-canvas-fetch').on('click', () => {
-        stopCanvasFetch()
     })
 
     $('#bsd-refresh-data').on('click', async () => {
