@@ -10,8 +10,8 @@
         <div class="bsd-panel-head">
             <h1>To use:</h1>
             <p class="bsd-panel-head-note">Start on the target Synergy gradebook section (View by Assignment or View by Standard).</p>
-            <h2 id="bsd-step-title-1">1. Load courses and choose a Canvas course</h2>
-            <h2 id="bsd-step-title-2">2. Click Refresh / Fetch Canvas Scores</h2>
+            <h2 id="bsd-step-title-1">1. Select a course</h2>
+            <h2 id="bsd-step-title-2">2. Click Refresh</h2>
             <h2 id="bsd-step-title-3">3. Review and adjust mappings</h2>
             <h2 id="bsd-step-title-4">4. Paste (individually or All Mapped)</h2>
         </div>
@@ -19,29 +19,13 @@
         <div id="bsd-mapper-status"></div>
 
         <div class="bsd-canvas-source">
-            <div class="bsd-canvas-source-head">
-                <span class="bsd-canvas-source-title">Canvas Source</span>
-                <div class="bsd-canvas-source-head-actions">
-                    <button id="bsd-load-canvas-courses" type="button">Load Courses</button>
-                    <button id="bsd-stop-canvas-fetch" type="button" disabled>Stop</button>
-                </div>
-            </div>
-            <div class="bsd-canvas-source-row">
-                <label for="bsd-canvas-course-filter">Filter</label>
-                <input id="bsd-canvas-course-filter" type="text" placeholder="Type to filter courses">
-            </div>
-            <div class="bsd-canvas-source-row">
-                <label for="bsd-canvas-include-concluded">Archived</label>
-                <label class="bsd-checkbox-option" for="bsd-canvas-include-concluded">
-                    <input id="bsd-canvas-include-concluded" type="checkbox">
-                    Include archived courses
-                </label>
-            </div>
-            <div class="bsd-canvas-source-row bsd-step-course">
-                <label for="bsd-canvas-course-select">Course</label>
+            <div class="bsd-canvas-course-inline bsd-step-course">
+                <label class="bsd-canvas-source-title" for="bsd-canvas-course-select">Canvas course</label>
                 <select id="bsd-canvas-course-select">
                     <option value="">Choose Canvas course</option>
                 </select>
+                <button id="bsd-load-canvas-courses" type="button">Load Courses</button>
+                <button id="bsd-stop-canvas-fetch" type="button" disabled>Stop</button>
             </div>
             <div id="bsd-canvas-course-status"></div>
             <div id="bsd-canvas-fetch-status"></div>
@@ -96,12 +80,13 @@
         </div>
 
         <div class="bsd-panel-settings">
+            <span class="bsd-paste-settings-prefix">Settings:</span>
             <div class="bsd-field">
-                <label for="bsd-round-up-from">Round up at</label>
+                <label for="bsd-round-up-from">Round up at:</label>
                 <input id="bsd-round-up-from" type="number" min="0.01" max="0.99" step="0.01">
             </div>
             <div class="bsd-field">
-                <label for="bsd-missing-pref">Missing/zero</label>
+                <label for="bsd-missing-pref">Missing/zero:</label>
                 <select id="bsd-missing-pref">
                     <option value="skip">Skip</option>
                     <option value="comment">Comment (Mi)</option>
@@ -127,18 +112,17 @@
                     </span>
                     <span id="bsd-paste-all-toast" class="bsd-paste-all-toast" aria-live="polite"></span>
                 </div>
+                <div class="bsd-sort-controls">
+                    <span class="bsd-inline-label">Sort tiles:</span>
+                    <select id="bsd-sort-method">
+                        <option value="canvas_recent_desc">Most Recent First</option>
+                        <option value="canvas_name_asc">Canvas Assignment A-Z</option>
+                        <option value="synergy_name_asc">Synergy Assignment A-Z</option>
+                        <option value="synergy_order_ltr">Synergy Left-Right</option>
+                    </select>
+                    <button id="bsd-apply-sort" type="button">Sort Tiles</button>
+                </div>
             </div>
-        </div>
-
-        <div class="bsd-sort-controls">
-            <span class="bsd-inline-label">Sort tiles:</span>
-            <select id="bsd-sort-method">
-                <option value="canvas_recent_desc">Most Recent First</option>
-                <option value="canvas_name_asc">Canvas Assignment A-Z</option>
-                <option value="synergy_name_asc">Synergy Assignment A-Z</option>
-                <option value="synergy_order_ltr">Synergy Left-Right</option>
-            </select>
-            <button id="bsd-apply-sort" type="button">Sort Tiles</button>
         </div>
 
         <div id="bsd-map-cards"></div>

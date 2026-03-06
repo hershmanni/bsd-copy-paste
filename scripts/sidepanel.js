@@ -1377,17 +1377,8 @@ function normalizeCourseFilterText(value) {
 }
 
 function renderCanvasCourseOptions() {
-    let filterInput = $('#bsd-canvas-course-filter')
-    let filterRaw = String(filterInput.val() || mapperState.canvasCourseFilter || '')
-    let filterText = normalizeCourseFilterText(filterRaw)
-    mapperState.canvasCourseFilter = filterRaw
-
-    let filteredCourses = mapperState.canvasCourses.filter((course) => {
-        if (!filterText) {
-            return true
-        }
-        return normalizeCourseFilterText(getCanvasCourseDisplayName(course)).includes(filterText)
-    })
+    mapperState.canvasCourseFilter = ''
+    let filteredCourses = mapperState.canvasCourses.slice()
 
     let selectedCourseId = String(mapperState.selectedCanvasCourseId || '')
     if (selectedCourseId && !filteredCourses.some((course) => String(course.id) === selectedCourseId)) {
@@ -1399,8 +1390,7 @@ function renderCanvasCourseOptions() {
 
     let select = $('#bsd-canvas-course-select')
     select.empty()
-    let placeholder = filterText && filteredCourses.length === 0 ? 'No matching course' : 'Choose Canvas course'
-    select.append(`<option value="">${placeholder}</option>`)
+    select.append('<option value="">Choose Canvas course</option>')
 
     filteredCourses.forEach((course) => {
         let option = $('<option></option>')
@@ -2043,8 +2033,8 @@ async function loadCanvasCourses(forceFromTabs = false, options = {}) {
         if (resetSelectedCourse) {
             mapperState.selectedCanvasCourseId = ''
         }
-        let includeConcluded = Boolean($('#bsd-canvas-include-concluded').prop('checked') || mapperState.canvasIncludeConcludedCourses)
-        mapperState.canvasIncludeConcludedCourses = includeConcluded
+        let includeConcluded = false
+        mapperState.canvasIncludeConcludedCourses = false
 
         let baseUrl = await ensureCanvasBaseUrl(forceFromTabs)
         let allCourses = await fetchCanvasCourses(baseUrl, includeConcluded)
@@ -3887,24 +3877,32 @@ function createMapperCard(cardData = {}) {
     let card = $(`
         <div class="bsd-map-card" data-card-id="${mappingCardCounter}">
             <div class="bsd-card-head">
-                <div class="bsd-card-title">
-                    <span class="bsd-card-title-prefix">Synergy Assignment:</span>
-                    <select class="bsd-card-syn-assign-select"></select>
-                </div>
                 <div class="bsd-card-actions">
                     <button class="bsd-card-add-alt" type="button">Add ALT</button>
                     <button class="bsd-card-paste" type="button">Paste Assignment</button>
                     <button class="bsd-card-remove bsd-x-remove" type="button" title="Remove assignment">x</button>
                 </div>
             </div>
-            <div class="bsd-card-meta-row">
-                <div class="bsd-meta-field bsd-canvas-assign-field">
-                    <span class="bsd-inline-label">Canvas Assignment:</span>
-                    <select class="bsd-card-canvas-assign-select"></select>
+            <div class="bsd-assignment-wrap">
+                <div class="bsd-standards-title">Assignment</div>
+                <div class="bsd-card-assignment-row">
+                    <div class="bsd-card-assignment-field bsd-card-assignment-field-synergy">
+                        <select class="bsd-card-syn-assign-select"></select>
+                    </div>
+                    <div class="bsd-card-assignment-field bsd-card-assignment-field-canvas">
+                        <select class="bsd-card-canvas-assign-select"></select>
+                    </div>
                 </div>
-                <div class="bsd-meta-field bsd-updated-field">
-                    <span class="bsd-inline-label">last updated:</span>
-                    <div class="bsd-canvas-updated">-</div>
+                <div class="bsd-card-assignment-meta-row">
+                    <div class="bsd-card-assignment-meta bsd-card-assignment-meta-synergy">
+                        <span class="bsd-inline-label">Synergy</span>
+                    </div>
+                    <div class="bsd-card-assignment-meta bsd-card-assignment-meta-canvas">
+                        <span class="bsd-inline-label">Canvas</span>
+                        <span class="bsd-card-assignment-meta-sep" aria-hidden="true">|</span>
+                        <span class="bsd-inline-label">last updated:</span>
+                        <div class="bsd-canvas-updated">-</div>
+                    </div>
                 </div>
             </div>
             <div class="bsd-standards-wrap">
@@ -4479,7 +4477,7 @@ function showInlineMappingError(inputEl, text) {
     }
 
     input.addClass('bsd-input-error')
-    let container = input.closest('.bsd-row-field, .bsd-meta-field')
+    let container = input.closest('.bsd-row-field, .bsd-meta-field, .bsd-card-assignment-field')
     if (container.length === 0) {
         input.after(`<div class="bsd-inline-error">${text}</div>`)
         return
@@ -4838,16 +4836,6 @@ function wireUiEvents() {
         await loadCanvasCourses(true)
     })
 
-    $('#bsd-canvas-include-concluded').on('change', async () => {
-        mapperState.canvasIncludeConcludedCourses = Boolean($('#bsd-canvas-include-concluded').prop('checked'))
-        setCanvasCourseStatus('Course scope changed. Click "Load Courses" to refresh list.')
-    })
-
-    $('#bsd-canvas-course-filter').on('input', () => {
-        mapperState.canvasCourseFilter = String($('#bsd-canvas-course-filter').val() || '')
-        renderCanvasCourseOptions()
-    })
-
     $('#bsd-canvas-course-select').on('change', async () => {
         await onCanvasCourseSelectionChanged(false)
     })
@@ -4932,8 +4920,8 @@ function wireUiEvents() {
 }
 
 async function initializeCanvasSourceUi() {
-    $('#bsd-canvas-include-concluded').prop('checked', Boolean(mapperState.canvasIncludeConcludedCourses))
-    $('#bsd-canvas-course-filter').val(mapperState.canvasCourseFilter || '')
+    mapperState.canvasIncludeConcludedCourses = false
+    mapperState.canvasCourseFilter = ''
     setRefreshActivity(false)
     renderCanvasCourseOptions()
     renderCanvasAssignmentSummary()

@@ -103,6 +103,8 @@
 #bsd-mapper-status {
     margin-bottom: 8px;
     color: #b4f7fe;
+    font-size: 12px;
+    line-height: 1.35;
 }
 
 #bsd-sidepanel .bsd-canvas-source {
@@ -113,49 +115,31 @@
     background: #242b33;
 }
 
-#bsd-sidepanel .bsd-canvas-source-head {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 8px;
-    margin-bottom: 6px;
-}
-
-#bsd-sidepanel .bsd-canvas-source-head-actions {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 6px;
-}
-
 #bsd-sidepanel .bsd-canvas-source-title {
-    font-size: 12px;
+    font-size: 13px;
     color: #b4f7fe;
-    font-weight: 600;
-}
-
-#bsd-sidepanel .bsd-canvas-source-row {
-    display: grid;
-    grid-template-columns: 72px 1fr;
-    align-items: center;
-    gap: 6px;
-    margin-bottom: 6px;
-}
-
-#bsd-sidepanel .bsd-canvas-source-row label {
-    font-size: 11px;
-    color: #8fb2d1;
+    font-weight: 700;
     white-space: nowrap;
 }
 
-#bsd-sidepanel .bsd-step-course {
+#bsd-sidepanel .bsd-canvas-course-inline {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto auto;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 6px;
     border: 1px solid rgba(60, 201, 171, 0.4);
     border-radius: 6px;
-    padding: 6px;
+    padding: 6px 8px;
     background: rgba(60, 201, 171, 0.07);
     transition: border-color 140ms ease, box-shadow 140ms ease, background-color 140ms ease;
 }
 
-#bsd-sidepanel .bsd-step-course label[for="bsd-canvas-course-select"]::before {
+#bsd-sidepanel .bsd-step-course {
+    min-width: 0;
+}
+
+#bsd-sidepanel .bsd-step-course > label[for="bsd-canvas-course-select"]::before {
     content: "#1";
     display: inline-flex;
     align-items: center;
@@ -172,8 +156,7 @@
     transition: background-color 140ms ease, box-shadow 140ms ease;
 }
 
-#bsd-sidepanel .bsd-canvas-source-row select,
-#bsd-sidepanel .bsd-canvas-source-row input:not([type="checkbox"]) {
+#bsd-sidepanel .bsd-canvas-course-inline select {
     background: #2b3138;
     color: #ffffff;
     border: 1px solid #586473;
@@ -189,22 +172,6 @@
     box-shadow: 0 0 0 1px rgba(60, 201, 171, 0.25);
 }
 
-#bsd-sidepanel .bsd-checkbox-option {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    font-size: 11px;
-    color: #d5e4f6;
-    white-space: nowrap;
-}
-
-#bsd-sidepanel .bsd-checkbox-option input[type="checkbox"] {
-    margin: 0;
-    width: 14px;
-    height: 14px;
-    accent-color: #008cff;
-}
-
 #bsd-sidepanel .bsd-canvas-assignment-summary {
     margin: 4px 0 0 0;
     border: 1px solid #3b444f;
@@ -216,7 +183,8 @@
 #bsd-sidepanel .bsd-canvas-assignment-summary summary {
     cursor: pointer;
     color: #c4e4ff;
-    font-size: 11px;
+    font-size: 12px;
+    font-weight: 600;
 }
 
 #bsd-sidepanel .bsd-canvas-fetch-row {
@@ -274,8 +242,9 @@
 #bsd-canvas-fetch-status {
     margin-top: 6px;
     color: #b4f7fe;
-    font-size: 11px;
+    font-size: 12px;
     min-height: 14px;
+    line-height: 1.35;
 }
 
 #bsd-sidepanel .bsd-hidden {
@@ -375,6 +344,13 @@
     margin-bottom: 10px;
 }
 
+#bsd-sidepanel .bsd-paste-settings-prefix {
+    color: #b4f7fe;
+    font-size: 12px;
+    font-weight: 700;
+    white-space: nowrap;
+}
+
 #bsd-sidepanel .bsd-field {
     display: flex;
     gap: 6px;
@@ -383,7 +359,7 @@
 }
 
 #bsd-sidepanel .bsd-field label {
-    font-size: 11px;
+    font-size: 12px;
     color: #8fb2d1;
     white-space: nowrap;
 }
@@ -418,10 +394,12 @@
     gap: 6px;
     flex-wrap: wrap;
     align-items: center;
+    justify-content: flex-start;
 }
 
 #bsd-sidepanel .bsd-step-3-controls,
-#bsd-sidepanel .bsd-step-4-controls {
+#bsd-sidepanel .bsd-step-4-controls,
+#bsd-sidepanel .bsd-sort-controls {
     display: inline-flex;
     gap: 6px;
     flex-wrap: wrap;
@@ -711,15 +689,12 @@
 }
 
 #bsd-sidepanel .bsd-sort-controls {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    flex-wrap: wrap;
-    margin: -2px 0 8px;
-    padding: 6px 8px;
+    margin: 0;
+    padding: 0;
     border: 1px solid #354454;
     border-radius: 6px;
     background: rgba(43, 54, 66, 0.65);
+    padding: 6px 8px;
 }
 
 #bsd-sidepanel .bsd-sort-controls #bsd-sort-method {
@@ -829,9 +804,21 @@
 
 .bsd-card-head {
     display: flex;
-    justify-content: space-between;
+    justify-content: flex-end;
     align-items: center;
     gap: 8px;
+    margin-bottom: 6px;
+}
+
+.bsd-assignment-wrap,
+.bsd-standards-wrap {
+    margin-top: 6px;
+    padding-left: 10px;
+    border-left: 2px solid #3b444f;
+}
+
+.bsd-assignment-wrap {
+    margin-top: 0;
     margin-bottom: 6px;
 }
 
@@ -862,14 +849,6 @@
     max-width: 280px;
 }
 
-.bsd-card-meta-row {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    flex-wrap: wrap;
-    margin-bottom: 6px;
-}
-
 .bsd-meta-field {
     display: grid;
     grid-template-columns: auto minmax(140px, auto);
@@ -884,10 +863,11 @@
 
 .bsd-inline-label {
     color: #8fb2d1;
-    font-size: 11px;
+    font-size: 12px;
     white-space: nowrap;
 }
 
+.bsd-card-assignment-field select,
 .bsd-card-meta-row select,
 .bsd-row-field select {
     background: #2b3138;
@@ -900,16 +880,54 @@
     max-width: 260px;
 }
 
-.bsd-standards-wrap {
-    margin-top: 6px;
-    padding-left: 10px;
-    border-left: 2px solid #3b444f;
-}
-
 .bsd-standards-title {
     color: #8fb2d1;
-    font-size: 11px;
+    font-size: 12px;
+    font-weight: 600;
     margin-bottom: 4px;
+}
+
+.bsd-card-assignment-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: 12px;
+    align-items: start;
+}
+
+.bsd-card-assignment-row {
+    margin-bottom: 4px;
+}
+
+.bsd-card-assignment-field {
+    min-width: 0;
+}
+
+.bsd-card-assignment-field select {
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+}
+
+.bsd-card-assignment-meta-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: 12px;
+    align-items: center;
+}
+
+.bsd-card-assignment-meta {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+    color: #8fb2d1;
+    font-size: 12px;
+}
+
+.bsd-card-assignment-meta-sep {
+    color: #7d98af;
+    font-size: 12px;
+    line-height: 1;
 }
 
 .bsd-canvas-updated {
@@ -1061,8 +1079,8 @@
 }
 
 @media (max-width: 780px) {
-    #bsd-sidepanel .bsd-canvas-source-row {
-        grid-template-columns: 64px 1fr;
+    #bsd-sidepanel .bsd-canvas-course-inline {
+        grid-template-columns: auto minmax(0, 1fr);
     }
 
     .bsd-card-head {
@@ -1085,6 +1103,16 @@
     .bsd-card-actions {
         justify-content: flex-end;
         margin-left: auto;
+    }
+
+    .bsd-card-assignment-row {
+        grid-template-columns: 1fr;
+        gap: 8px;
+    }
+
+    .bsd-card-assignment-meta-row {
+        grid-template-columns: 1fr;
+        gap: 6px;
     }
 
     .bsd-card-meta-row {
@@ -1143,18 +1171,9 @@
 }
 
 @media (max-width: 620px) {
-    #bsd-sidepanel .bsd-canvas-source-row {
+    #bsd-sidepanel .bsd-canvas-course-inline {
         grid-template-columns: 1fr;
         align-items: flex-start;
-    }
-
-    #bsd-sidepanel .bsd-canvas-source-head {
-        flex-wrap: wrap;
-        align-items: flex-start;
-    }
-
-    #bsd-sidepanel .bsd-canvas-source-head-actions {
-        width: 100%;
     }
 
     #bsd-sidepanel .bsd-canvas-fetch-row {
