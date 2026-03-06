@@ -67,6 +67,29 @@
                     </table>
                 </div>
             </details>
+            <div id="bsd-assignment-helper" class="bsd-assignment-helper bsd-hidden">
+                <div class="bsd-assignment-helper-head">
+                    <div class="bsd-assignment-helper-copy">
+                        <div class="bsd-assignment-helper-title">Assignment Helper</div>
+                        <div class="bsd-assignment-helper-note">Copy a Canvas assignment title while creating the matching Synergy assignment.</div>
+                    </div>
+                    <button id="bsd-toggle-assignment-helper" type="button">Show Assignment Helper</button>
+                </div>
+                <div id="bsd-assignment-helper-body" class="bsd-assignment-helper-body bsd-hidden">
+                    <label class="bsd-copy-assignment-label" for="bsd-copy-canvas-assignment">Copy Canvas Assignment Title</label>
+                    <select id="bsd-copy-canvas-assignment">
+                        <option value="">Select Canvas course first</option>
+                    </select>
+                    <div id="bsd-copy-canvas-assignment-details" class="bsd-copy-assignment-details bsd-hidden">
+                        <div id="bsd-copy-canvas-assignment-name" class="bsd-copy-assignment-name"></div>
+                        <div id="bsd-copy-canvas-assignment-meta" class="bsd-copy-assignment-meta"></div>
+                        <div class="bsd-copy-assignment-outcomes-wrap">
+                            <div class="bsd-copy-assignment-outcomes-title">Canvas Targets</div>
+                            <ul id="bsd-copy-canvas-assignment-outcomes" class="bsd-copy-assignment-outcomes"></ul>
+                        </div>
+                    </div>
+                </div>
+            </div>
             <div id="bsd-no-submissions-callout" class="bsd-no-submissions-callout bsd-hidden">
                 Fetch Canvas Scores to continue.
             </div>
@@ -119,9 +142,6 @@
         </div>
 
         <div id="bsd-map-cards"></div>
-        <div class="bsd-add-assignment-row">
-            <button id="bsd-add-mapping" type="button">Add Assignment</button>
-        </div>
     </div>
 
     <script src="scripts/jquery-3.6.3.min.js"></script>

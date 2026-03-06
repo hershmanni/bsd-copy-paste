@@ -21,6 +21,8 @@ let mapperState = {
     synergyCanvasCourseMatches: {},
     canvasBaseUrl: '',
     selectedCanvasCourseId: '',
+    copiedCanvasAssignmentId: '',
+    assignmentHelperExpanded: false,
     canvasCourseFilter: '',
     canvasIncludeConcludedCourses: false,
     canvasCourses: [],
@@ -97,11 +99,13 @@ function setRefreshActivity(active, text = 'Refreshing...') {
     if (active) {
         activity.removeClass('bsd-hidden')
         updateCanvasActionButtons()
+        updateCopyCanvasAssignmentVisibility()
         return
     }
 
     activity.addClass('bsd-hidden')
     updateCanvasActionButtons()
+    updateCopyCanvasAssignmentVisibility()
 }
 
 function showPasteAllToast(text, isError = false, durationMs = 2200) {
@@ -383,13 +387,27 @@ function getManualSynergyAssignmentKey(synergyAssignment) {
     return normalized || ''
 }
 
-function getManualRowAlignmentKey(synergyAssignment, colIndex = '', synergyAlt = '') {
+function getStableSynergyAltKey(synergyAlt, synergyHeaderId = '') {
+    let headerId = String(synergyHeaderId || '').trim()
+    let normalizedAlt = normalizeHeaderText(synergyAlt || '')
+    if (!normalizedAlt) {
+        return ''
+    }
+
+    if (!headerId && normalizedAlt.match(/^column\s+\d+$/i)) {
+        return ''
+    }
+
+    return normalizeForMatch(normalizedAlt)
+}
+
+function getManualRowAlignmentKey(synergyAssignment, colIndex = '', synergyAlt = '', synergyHeaderId = '') {
     let synergyKey = getManualSynergyAssignmentKey(synergyAssignment)
     if (!synergyKey) {
         return ''
     }
 
-    let altKey = normalizeForMatch(synergyAlt)
+    let altKey = getStableSynergyAltKey(synergyAlt, synergyHeaderId)
     if (altKey) {
         return `${synergyKey}::alt:${altKey}`
     }
@@ -443,7 +461,12 @@ function normalizeManualAlignmentSet(rawSet) {
         if (!synergyKey || !assignmentId || !rubricId) {
             return
         }
-        let key = getManualRowAlignmentKey(normalizedRow.synergy_assignment, colIndex, synergyAlt)
+        let key = getManualRowAlignmentKey(
+            normalizedRow.synergy_assignment,
+            colIndex,
+            synergyAlt,
+            normalizedRow.synergy_header_id
+        )
         if (!key) {
             // Backward compatibility for legacy key format keyed by col_index only.
             let legacyMatch = String(rowKey || '').match(/^(.*?)::(.+)$/)
@@ -1191,6 +1214,7 @@ function updatePrimaryRefreshButtonUi() {
 function updateCanvasActionButtons() {
     let hasCourse = Boolean(String($('#bsd-canvas-course-select').val() || mapperState.selectedCanvasCourseId || ''))
     let controlsDisabled = canvasFetchInFlight || refreshActionInFlight
+    let hasAssignments = getCachedAssignmentsForSelectedCourse().length > 0
 
     $('#bsd-load-canvas-courses').prop('disabled', controlsDisabled)
     $('#bsd-canvas-include-concluded').prop('disabled', controlsDisabled)
@@ -1198,6 +1222,9 @@ function updateCanvasActionButtons() {
     $('#bsd-canvas-course-select').prop('disabled', controlsDisabled)
     $('#bsd-refresh-data').prop('disabled', !hasCourse || controlsDisabled)
     $('#bsd-stop-canvas-fetch').prop('disabled', !canvasFetchInFlight)
+    $('#bsd-copy-canvas-assignment').prop('disabled', controlsDisabled || !hasAssignments)
+    $('#bsd-toggle-assignment-helper').prop('disabled', controlsDisabled || !hasAssignments)
+    updateCopyCanvasAssignmentHelperUi()
     updatePrimaryRefreshButtonUi()
 }
 
@@ -1398,6 +1425,144 @@ function getCachedAssignmentsForSelectedCourse() {
     return Array.isArray(assignments) ? assignments : []
 }
 
+function renderCopyCanvasAssignmentOptions() {
+    let select = $('#bsd-copy-canvas-assignment')
+    if (select.length === 0) {
+        return
+    }
+
+    let assignments = getCachedAssignmentsForSelectedCourse()
+    let selectedCourseId = String(mapperState.selectedCanvasCourseId || '')
+    let previousValue = String(select.val() || '')
+    let controlsDisabled = canvasFetchInFlight || refreshActionInFlight
+
+    select.empty()
+
+    let placeholder = 'Choose Canvas assignment title'
+    if (!selectedCourseId) {
+        placeholder = 'Select Canvas course first'
+    } else if (assignments.length === 0) {
+        placeholder = 'Load Canvas assignments first'
+    }
+
+    select.append(
+        $('<option></option>')
+            .attr('value', '')
+            .text(placeholder)
+    )
+
+    assignments.forEach((assignment) => {
+        let assignmentId = String(assignment && assignment.id ? assignment.id : '')
+        if (!assignmentId) {
+            return
+        }
+
+        select.append(
+            $('<option></option>')
+                .attr('value', assignmentId)
+                .text(String(assignment && assignment.name ? assignment.name : assignmentId))
+        )
+    })
+
+    if (previousValue && assignments.some((assignment) => String(assignment.id) === previousValue)) {
+        select.val(previousValue)
+    }
+
+    select.prop('disabled', controlsDisabled || assignments.length === 0)
+    updateCopyCanvasAssignmentHelperUi()
+}
+
+function updateCopyCanvasAssignmentHelperUi() {
+    let helper = $('#bsd-assignment-helper')
+    let toggle = $('#bsd-toggle-assignment-helper')
+    let body = $('#bsd-assignment-helper-body')
+    if (helper.length === 0 || toggle.length === 0 || body.length === 0) {
+        return
+    }
+
+    let hasAssignments = getCachedAssignmentsForSelectedCourse().length > 0
+    if (!hasAssignments) {
+        mapperState.assignmentHelperExpanded = false
+    }
+
+    let expanded = Boolean(mapperState.assignmentHelperExpanded && hasAssignments)
+    toggle.text(expanded ? 'Hide Assignment Helper' : 'Show Assignment Helper')
+    body.toggleClass('bsd-hidden', !expanded)
+    helper.toggleClass('bsd-assignment-helper-open', expanded)
+}
+
+function renderCopyCanvasAssignmentDetails() {
+    let panel = $('#bsd-copy-canvas-assignment-details')
+    let nameEl = $('#bsd-copy-canvas-assignment-name')
+    let metaEl = $('#bsd-copy-canvas-assignment-meta')
+    let outcomesEl = $('#bsd-copy-canvas-assignment-outcomes')
+    if (panel.length === 0 || nameEl.length === 0 || metaEl.length === 0 || outcomesEl.length === 0) {
+        return
+    }
+
+    metaEl.empty()
+    outcomesEl.empty()
+
+    let assignmentId = String(mapperState.copiedCanvasAssignmentId || '')
+    let assignments = getCachedAssignmentsForSelectedCourse()
+    let assignment = assignmentId ? getAssignmentById(assignments, assignmentId) : null
+    if (!assignment) {
+        mapperState.copiedCanvasAssignmentId = ''
+        nameEl.text('')
+        panel.addClass('bsd-hidden')
+        return
+    }
+
+    let submissionsByAssignment = getStoredSubmissionsByAssignmentForCourse(assignments)
+    let submissions = Array.isArray(submissionsByAssignment[assignmentId]) ? submissionsByAssignment[assignmentId] : []
+    let rubrics = getRubrics(assignment)
+
+    nameEl.text(String(assignment.name || assignmentId))
+
+    let metaItems = [
+        {
+            label: 'Last updated',
+            value: getAssignmentUpdatedText(assignment)
+        },
+        {
+            label: 'Submissions',
+            value: String(submissions.length)
+        },
+        {
+            label: 'Points',
+            value: assignment.points_possible == null ? '-' : String(assignment.points_possible)
+        },
+        {
+            label: 'Due',
+            value: formatCanvasDateTime(assignment.due_at)
+        }
+    ]
+
+    metaItems.forEach((item) => {
+        let chip = $('<div class="bsd-copy-assignment-meta-item"></div>')
+        chip.append($('<span class="bsd-copy-assignment-meta-label"></span>').text(`${item.label}:`))
+        chip.append($('<span></span>').text(String(item.value || '-')))
+        metaEl.append(chip)
+    })
+
+    if (rubrics.length === 0) {
+        outcomesEl.append(
+            $('<li class="bsd-copy-assignment-empty"></li>').text('No Canvas targets on this assignment.')
+        )
+    } else {
+        rubrics.forEach((rubric) => {
+            let item = $('<li></li>').text(getRubricOptionLabel(rubric))
+            let matchText = getRubricMatchText(rubric)
+            if (matchText) {
+                item.attr('title', matchText)
+            }
+            outcomesEl.append(item)
+        })
+    }
+
+    panel.removeClass('bsd-hidden')
+}
+
 function formatCanvasDateTime(value) {
     if (!value) {
         return '-'
@@ -1454,6 +1619,8 @@ function renderCanvasAssignmentSummary() {
     tbody.empty()
 
     let assignments = getCachedAssignmentsForSelectedCourse()
+    renderCopyCanvasAssignmentOptions()
+    renderCopyCanvasAssignmentDetails()
     if (assignments.length === 0) {
         summaryText.text('No Canvas assignments loaded yet.')
         tbody.append('<tr><td colspan="3">No assignment data.</td></tr>')
@@ -1551,21 +1718,8 @@ function addSynergyIdsToSubmissions(submissions, students) {
 }
 
 function getCanvasUserCourseMatchIds(user) {
-    let ids = []
-    let candidates = [
-        user && user.login_id,
-        user && user.sis_user_id,
-        user && user.integration_id
-    ]
-
-    for (let i = 0; i < candidates.length; i++) {
-        let normalized = normalizeSynergyId(candidates[i])
-        if (normalized) {
-            ids.push(normalized)
-        }
-    }
-
-    return ids
+    let loginId = normalizeSynergyId(user && user.login_id)
+    return loginId ? [loginId] : []
 }
 
 async function fetchCanvasStudentSampleForCourse(courseId, baseUrl, sampleSize = 10) {
@@ -2309,6 +2463,7 @@ async function clearMapperDataForCourseChange(selectedCourseId) {
     let safeCourseId = String(selectedCourseId || '')
 
     setActiveCourseDataFromCache(safeCourseId)
+    mapperState.copiedCanvasAssignmentId = ''
     syncMappingsFromCurrentPair()
 
     let firstSubmissions = getFirstSubmissionsForAssignments(mapperState.assignments, mapperState.submissionsByAssignment)
@@ -2787,8 +2942,8 @@ function doesSynergyColumnMatchStoredMapping(column, mapping, groupedColumns = n
     let stored = normalizeMappingRecord(mapping)
     let storedHeaderId = String(stored.synergy_header_id || '').trim()
     let storedAssignment = cleanSynergyAssignmentLabel(stored.synergy_assignment || '')
-    let resolvedStoredAssignment = resolveSynergyAssignmentName(storedAssignment, groupedColumns)
-    let storedAltKey = normalizeForMatch(stored.synergy_alt)
+    let resolvedStoredAssignment = resolveStoredSynergyAssignmentName(storedAssignment, groupedColumns)
+    let storedAltKey = getStableSynergyAltKey(stored.synergy_alt, storedHeaderId)
 
     if (storedHeaderId && String(column.header_id || '').trim() !== storedHeaderId) {
         return false
@@ -2817,14 +2972,14 @@ function resolveSynergyColumnForStoredMapping(mapping, groupedColumns = null) {
     let storedColIndex = String(stored.col_index || '').trim()
     let storedHeaderId = String(stored.synergy_header_id || '').trim()
     let storedAssignment = cleanSynergyAssignmentLabel(stored.synergy_assignment || '')
-    let resolvedAssignment = resolveSynergyAssignmentName(storedAssignment, grouped)
+    let resolvedAssignment = resolveStoredSynergyAssignmentName(storedAssignment, grouped)
     let storedAlt = normalizeHeaderText(stored.synergy_alt || '')
-    let storedAltKey = normalizeForMatch(storedAlt)
-    let hasMatchMetadata = Boolean(storedHeaderId || resolvedAssignment || storedAltKey)
-
+    let storedAltKey = getStableSynergyAltKey(storedAlt, storedHeaderId)
     let byIndex = storedColIndex ? getSynergyColumnByIndex(storedColIndex) : null
-    if (byIndex && (!hasMatchMetadata || doesSynergyColumnMatchStoredMapping(byIndex, stored, grouped))) {
-        return byIndex
+
+    let assignmentColumns = []
+    if (resolvedAssignment && Array.isArray(grouped[resolvedAssignment])) {
+        assignmentColumns = grouped[resolvedAssignment]
     }
 
     if (storedHeaderId) {
@@ -2834,36 +2989,25 @@ function resolveSynergyColumnForStoredMapping(mapping, groupedColumns = null) {
         }
     }
 
-    let assignmentColumns = []
-    if (resolvedAssignment && Array.isArray(grouped[resolvedAssignment])) {
-        assignmentColumns = grouped[resolvedAssignment]
+    if (storedAltKey && assignmentColumns.length > 0) {
+        let exactAltMatches = assignmentColumns.filter((column) => {
+            return normalizeForMatch(getSynergyColumnAltText(column)) === storedAltKey
+        })
+        if (exactAltMatches.length === 1) {
+            return exactAltMatches[0]
+        }
+        if (
+            exactAltMatches.length > 1 &&
+            byIndex &&
+            exactAltMatches.some((column) => String(column.col_index || '') === String(byIndex.col_index || ''))
+        ) {
+            return byIndex
+        }
+        return null
     }
 
-    if (storedAltKey) {
-        let searchPool = assignmentColumns.length > 0 ? assignmentColumns : getVisibleSynergyColumns()
-        let exactAltMatch = searchPool.find((column) => normalizeForMatch(getSynergyColumnAltText(column)) === storedAltKey)
-        if (exactAltMatch) {
-            return exactAltMatch
-        }
-
-        let fuzzy = findBestMatch(
-            storedAlt,
-            searchPool,
-            (column) => getSynergyColumnAltText(column),
-            0.82,
-            altSimilarityScore
-        )
-        if (fuzzy && fuzzy.item) {
-            return fuzzy.item
-        }
-    }
-
-    if (!storedAltKey && assignmentColumns.length === 1) {
+    if (!storedHeaderId && !storedAltKey && assignmentColumns.length === 1) {
         return assignmentColumns[0]
-    }
-
-    if (byIndex && !hasMatchMetadata) {
-        return byIndex
     }
 
     return null
@@ -2937,6 +3081,36 @@ function resolveSynergyAssignmentName(selectedSynergyAssignment, groupedColumns 
     let fuzzy = findBestMatch(raw, keys, (value) => value, 0.7)
     if (fuzzy && fuzzy.item) {
         return String(fuzzy.item)
+    }
+
+    return ''
+}
+
+function resolveStoredSynergyAssignmentName(selectedSynergyAssignment, groupedColumns = null) {
+    let grouped = groupedColumns || getSynergyColumnsByAssignment()
+    let keys = Object.keys(grouped)
+    if (keys.length === 0) {
+        return ''
+    }
+
+    let raw = cleanSynergyAssignmentLabel(selectedSynergyAssignment || '')
+    if (!raw) {
+        return ''
+    }
+
+    if (grouped[raw]) {
+        return raw
+    }
+
+    let normalizedRaw = normalizeForMatch(raw)
+    if (!normalizedRaw) {
+        return ''
+    }
+
+    for (let i = 0; i < keys.length; i++) {
+        if (normalizeForMatch(keys[i]) === normalizedRaw) {
+            return keys[i]
+        }
     }
 
     return ''
@@ -3037,6 +3211,14 @@ function updateCourseStepUi() {
     root.toggleClass('bsd-step-4-active', hasPasteReady)
 }
 
+function updateCopyCanvasAssignmentVisibility() {
+    let hasCourse = hasSelectedCanvasCourse()
+    let hasFetched = hasCourse && hasFetchedSubmissionsReady()
+    let showCopyAssignment = hasFetched && !refreshActionInFlight
+    $('#bsd-assignment-helper').toggleClass('bsd-hidden', !showCopyAssignment)
+    updateCopyCanvasAssignmentHelperUi()
+}
+
 function updateMapperReadyUi() {
     let hasCourse = hasSelectedCanvasCourse()
     let hasFetched = hasCourse && hasFetchedSubmissionsReady()
@@ -3045,11 +3227,11 @@ function updateMapperReadyUi() {
     let showFetchPrompt = assignmentsLoaded && !hasFetched && !canvasFetchInFlight
 
     $('.bsd-panel-settings').toggleClass('bsd-no-submissions', !ready)
-    $('.bsd-add-assignment-row').toggleClass('bsd-no-submissions', !ready)
     $('.bsd-sort-controls').toggleClass('bsd-no-submissions', !ready)
     $('.bsd-step-4-controls').toggleClass('bsd-no-submissions', !ready)
     $('#bsd-map-cards').toggleClass('bsd-no-submissions', !ready)
     $('#bsd-no-submissions-callout').toggleClass('bsd-hidden', !showFetchPrompt)
+    updateCopyCanvasAssignmentVisibility()
     updatePrimaryRefreshButtonUi()
     updateCourseStepUi()
 }
@@ -3057,7 +3239,7 @@ function updateMapperReadyUi() {
 function buildSynergyAssignmentOptions(selectEl, selectedSynergyAssignment) {
     let grouped = getSynergyColumnsByAssignment()
     let assignments = Object.keys(grouped).sort((a, b) => a.localeCompare(b))
-    let resolvedSelected = resolveSynergyAssignmentName(selectedSynergyAssignment, grouped)
+    let resolvedSelected = resolveStoredSynergyAssignmentName(selectedSynergyAssignment, grouped)
 
     selectEl.empty()
     selectEl.append('<option value="">Choose Synergy assignment</option>')
@@ -3074,13 +3256,13 @@ function buildSynergyAssignmentOptions(selectEl, selectedSynergyAssignment) {
 
 function buildSynergyAltOptions(selectEl, selectedSynergyAssignment, selectedColIndex) {
     let grouped = getSynergyColumnsByAssignment()
-    let resolvedAssignment = resolveSynergyAssignmentName(selectedSynergyAssignment, grouped)
+    let resolvedAssignment = resolveStoredSynergyAssignmentName(selectedSynergyAssignment, grouped)
     let columns = []
     if (resolvedAssignment && grouped[resolvedAssignment]) {
         columns = grouped[resolvedAssignment]
     } else if (selectedColIndex) {
         let selectedColumn = getSynergyColumnByIndex(selectedColIndex)
-        let columnAssignment = selectedColumn ? resolveSynergyAssignmentName(selectedColumn.assignment_label, grouped) : ''
+        let columnAssignment = selectedColumn ? resolveStoredSynergyAssignmentName(selectedColumn.assignment_label, grouped) : ''
         if (columnAssignment && grouped[columnAssignment]) {
             columns = grouped[columnAssignment]
         }
@@ -3418,7 +3600,7 @@ function normalizeCardSeedData(cardData = {}) {
     let selectedCol = String(safe.col_index || '')
     let selectedColumn = selectedCol ? getSynergyColumnByIndex(selectedCol) : null
     let synergyAssignment = cleanSynergyAssignmentLabel(safe.synergy_assignment || (selectedColumn ? selectedColumn.assignment_label : ''))
-    let resolvedAssignment = resolveSynergyAssignmentName(synergyAssignment)
+    let resolvedAssignment = resolveStoredSynergyAssignmentName(synergyAssignment)
     if (resolvedAssignment) {
         synergyAssignment = resolvedAssignment
     }
@@ -3429,13 +3611,15 @@ function normalizeCardSeedData(cardData = {}) {
         safe.rows.forEach((row) => {
             rows.push({
                 col_index: String((row && row.col_index) || ''),
-                rubric_id: String((row && row.rubric_id) || '')
+                rubric_id: String((row && row.rubric_id) || ''),
+                preserve_blank_target: Boolean(row && row.preserve_blank_target)
             })
         })
     } else if (selectedCol || safe.rubric_id) {
         rows.push({
             col_index: selectedCol,
-            rubric_id: String(safe.rubric_id || '')
+            rubric_id: String(safe.rubric_id || ''),
+            preserve_blank_target: Boolean(safe.preserve_blank_target)
         })
     }
 
@@ -3627,6 +3811,7 @@ function createMapperCardRow(card, rowData = {}) {
     mappingRowCounter += 1
     let selectedCol = String(rowData.col_index || '')
     let canvasAssignmentId = getCardCanvasAssignment(card)
+    let preserveBlankTarget = Boolean(rowData && rowData.preserve_blank_target)
 
     let row = $(`
         <div class="bsd-map-row" data-row-id="${mappingRowCounter}">
@@ -3650,7 +3835,7 @@ function createMapperCardRow(card, rowData = {}) {
     let canvasAltSelect = row.find('.bsd-canvas-alt-select')
 
     buildSynergyAltOptions(synAltSelect, getCardSynergyAssignment(card), selectedCol)
-    if (!synAltSelect.val()) {
+    if (!synAltSelect.val() && !preserveBlankTarget) {
         let suggestion = getSuggestedRowSeedForCard(card)
         if (suggestion.col_index) {
             synAltSelect.val(String(suggestion.col_index))
@@ -3663,6 +3848,7 @@ function createMapperCardRow(card, rowData = {}) {
         clearInlineMappingErrors(card)
         autoMatchCanvasAltForRow(row, false)
         updateCardPasteStates(card)
+        rememberManualRowAlignment(row)
         persistMappingsFromUi()
     })
 
@@ -3691,6 +3877,7 @@ function createMapperCardRow(card, rowData = {}) {
     card.find('.bsd-card-rows').append(row)
     autoMatchCanvasAltForRow(row, false)
     updateCardPasteStates(card)
+    updateTrackedManualAlignmentKeysForRow(row)
 }
 
 function createMapperCard(cardData = {}) {
@@ -3838,7 +4025,7 @@ function buildCardSeedsFromMappings(mappings) {
         let colIndex = String(reconciled.col_index || '')
         let column = colIndex ? getSynergyColumnByIndex(colIndex) : null
         let derivedAssignment = cleanSynergyAssignmentLabel(reconciled.synergy_assignment || (column ? column.assignment_label : ''))
-        let resolvedAssignment = resolveSynergyAssignmentName(derivedAssignment, groupedColumns)
+        let resolvedAssignment = resolveStoredSynergyAssignmentName(derivedAssignment, groupedColumns)
         if (resolvedAssignment) {
             derivedAssignment = resolvedAssignment
         }
@@ -3856,17 +4043,23 @@ function buildCardSeedsFromMappings(mappings) {
             grouped[groupKey].assignment_id = String(reconciled.assignment_id)
         }
 
-        if (!colIndex) {
-            return
-        }
-
-        if (grouped[groupKey].rows.some((row) => String(row.col_index || '') === colIndex)) {
+        let rowExists = grouped[groupKey].rows.some((row) => {
+            if (colIndex) {
+                return String(row.col_index || '') === colIndex
+            }
+            return (
+                !String(row.col_index || '') &&
+                String(row.rubric_id || '') === String(reconciled.rubric_id || '')
+            )
+        })
+        if (rowExists) {
             return
         }
 
         grouped[groupKey].rows.push({
             col_index: colIndex,
-            rubric_id: String(reconciled.rubric_id || '')
+            rubric_id: String(reconciled.rubric_id || ''),
+            preserve_blank_target: !colIndex
         })
     })
 
@@ -3962,6 +4155,61 @@ function selectHasOptionValue(selectEl, value) {
     return selectEl.find('option').filter((_, optionEl) => String($(optionEl).val()) === wanted).length > 0
 }
 
+function getTrackedManualAlignmentKeysForRow(row, mapping = null) {
+    let trackedRowKey = String(row.attr('data-manual-row-key') || '')
+    let trackedLegacyRowKey = String(row.attr('data-manual-legacy-key') || '')
+    if (trackedRowKey || trackedLegacyRowKey) {
+        return {
+            rowKey: trackedRowKey,
+            legacyRowKey: trackedLegacyRowKey
+        }
+    }
+
+    let currentMapping = mapping || getMappingFromRow(row)
+    return {
+        rowKey: getManualRowAlignmentKey(
+            currentMapping.synergy_assignment,
+            '',
+            currentMapping.synergy_alt,
+            currentMapping.synergy_header_id
+        ),
+        legacyRowKey: getLegacyManualRowAlignmentKey(currentMapping.synergy_assignment, currentMapping.col_index)
+    }
+}
+
+function updateTrackedManualAlignmentKeysForRow(row, mapping = null) {
+    let currentMapping = mapping || getMappingFromRow(row)
+    let rowKey = getManualRowAlignmentKey(
+        currentMapping.synergy_assignment,
+        '',
+        currentMapping.synergy_alt,
+        currentMapping.synergy_header_id
+    )
+    let legacyRowKey = getLegacyManualRowAlignmentKey(currentMapping.synergy_assignment, currentMapping.col_index)
+
+    if (rowKey) {
+        row.attr('data-manual-row-key', rowKey)
+    } else {
+        row.removeAttr('data-manual-row-key')
+    }
+
+    if (legacyRowKey) {
+        row.attr('data-manual-legacy-key', legacyRowKey)
+    } else {
+        row.removeAttr('data-manual-legacy-key')
+    }
+
+    return {
+        rowKey,
+        legacyRowKey
+    }
+}
+
+function clearTrackedManualAlignmentKeysForRow(row) {
+    row.removeAttr('data-manual-row-key')
+    row.removeAttr('data-manual-legacy-key')
+}
+
 function getManualAlignmentDataForCurrentPair() {
     return getStoredManualAlignmentsForPairKey(getActiveSynergyCanvasPairKey())
 }
@@ -4011,9 +4259,10 @@ function rememberManualRowAlignment(row) {
     let mapping = getMappingFromRow(row)
     let synergyKey = getManualSynergyAssignmentKey(mapping.synergy_assignment)
     let colIndex = String(mapping.col_index || '')
-    let rowKey = getManualRowAlignmentKey(mapping.synergy_assignment, colIndex, mapping.synergy_alt)
+    let previousKeys = getTrackedManualAlignmentKeysForRow(row, mapping)
+    let rowKey = getManualRowAlignmentKey(mapping.synergy_assignment, '', mapping.synergy_alt, mapping.synergy_header_id)
     let legacyRowKey = getLegacyManualRowAlignmentKey(mapping.synergy_assignment, colIndex)
-    if (!synergyKey || !rowKey) {
+    if (!synergyKey) {
         return
     }
 
@@ -4021,11 +4270,17 @@ function rememberManualRowAlignment(row) {
     let assignmentId = String(mapping.assignment_id || '')
     let rubricId = String(mapping.rubric_id || '')
 
+    ;[previousKeys.rowKey, previousKeys.legacyRowKey, legacyRowKey]
+        .filter(Boolean)
+        .forEach((key) => {
+            delete manualSet.rowBySynergyCol[key]
+        })
+
     if (assignmentId) {
         manualSet.assignmentBySynergy[synergyKey] = assignmentId
     }
 
-    if (assignmentId && rubricId) {
+    if (assignmentId && rubricId && rowKey) {
         manualSet.rowBySynergyCol[rowKey] = {
             col_index: colIndex,
             synergy_assignment: String(mapping.synergy_assignment || ''),
@@ -4034,36 +4289,34 @@ function rememberManualRowAlignment(row) {
             assignment_id: assignmentId,
             rubric_id: rubricId
         }
-        if (legacyRowKey && legacyRowKey !== rowKey) {
-            delete manualSet.rowBySynergyCol[legacyRowKey]
-        }
-    } else {
-        delete manualSet.rowBySynergyCol[rowKey]
-        if (legacyRowKey && legacyRowKey !== rowKey) {
-            delete manualSet.rowBySynergyCol[legacyRowKey]
-        }
     }
 
     persistManualAlignmentDataForCurrentPair(manualSet)
+    updateTrackedManualAlignmentKeysForRow(row, mapping)
 }
 
 function forgetManualRowAlignment(row) {
     let mapping = getMappingFromRow(row)
-    let colIndex = String(mapping.col_index || '')
-    let rowKey = getManualRowAlignmentKey(mapping.synergy_assignment, colIndex, mapping.synergy_alt)
-    let legacyRowKey = getLegacyManualRowAlignmentKey(mapping.synergy_assignment, colIndex)
-    if (!rowKey && !legacyRowKey) {
+    let previousKeys = getTrackedManualAlignmentKeysForRow(row, mapping)
+    let currentRowKey = getManualRowAlignmentKey(
+        mapping.synergy_assignment,
+        '',
+        mapping.synergy_alt,
+        mapping.synergy_header_id
+    )
+    let currentLegacyRowKey = getLegacyManualRowAlignmentKey(mapping.synergy_assignment, mapping.col_index)
+    let keysToDelete = [previousKeys.rowKey, previousKeys.legacyRowKey, currentRowKey, currentLegacyRowKey]
+        .filter(Boolean)
+    if (keysToDelete.length === 0) {
         return
     }
 
     let manualSet = getManualAlignmentDataForCurrentPair()
-    if (rowKey) {
-        delete manualSet.rowBySynergyCol[rowKey]
-    }
-    if (legacyRowKey) {
-        delete manualSet.rowBySynergyCol[legacyRowKey]
-    }
+    keysToDelete.forEach((key) => {
+        delete manualSet.rowBySynergyCol[key]
+    })
     persistManualAlignmentDataForCurrentPair(manualSet)
+    clearTrackedManualAlignmentKeysForRow(row)
 }
 
 function forgetManualAssignmentAlignment(card) {
@@ -4630,9 +4883,39 @@ function wireUiEvents() {
         sortMapperCards(mapperState.sortMethod, true)
     })
 
-    $('#bsd-add-mapping').on('click', () => {
-        addMapperCard({})
-        persistMappingsFromUi()
+    $('#bsd-toggle-assignment-helper').on('click', function () {
+        if ($(this).prop('disabled')) {
+            return
+        }
+        mapperState.assignmentHelperExpanded = !mapperState.assignmentHelperExpanded
+        updateCopyCanvasAssignmentHelperUi()
+    })
+
+    $('#bsd-copy-canvas-assignment').on('change', async () => {
+        let select = $('#bsd-copy-canvas-assignment')
+        let assignmentId = String(select.val() || '')
+        if (!assignmentId) {
+            return
+        }
+
+        mapperState.copiedCanvasAssignmentId = assignmentId
+        renderCopyCanvasAssignmentDetails()
+
+        let assignment = getAssignmentById(getCachedAssignmentsForSelectedCourse(), assignmentId)
+        let assignmentLabel = normalizeHeaderText(assignment && assignment.name ? assignment.name : '')
+        if (!assignmentLabel) {
+            assignmentLabel = getSelectedCanvasAssignmentLabel(select)
+        }
+
+        let copied = await copyTextToClipboard(assignmentLabel)
+        if (copied) {
+            showClipboardCopyTooltip(select, 'Copied assignment title')
+        } else if (!clipboardCopyWarningShown) {
+            setMapperStatus('Could not copy assignment text to clipboard. Check browser clipboard permissions.', true)
+            clipboardCopyWarningShown = true
+        }
+
+        select.val('')
     })
 
     $('#bsd-paste-all').on('click', async () => {
