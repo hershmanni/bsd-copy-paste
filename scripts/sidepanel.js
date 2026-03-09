@@ -31,6 +31,7 @@ let mapperState = {
     submissionsByAssignmentByCourse: {},
     canvasSubmissionSyncByCourse: {},
     canvasStudentsByCourse: {},
+    canvasAuthRequired: false,
     viewMode: 'view_by_assignment',
     columns: [],
     assignments: [],
@@ -1124,15 +1125,73 @@ async function loadMapperStateFromStorage() {
 }
 
 function setCanvasCourseStatus(text, isError = false) {
+    syncCanvasAuthStateFromStatus(text, isError)
+    if (mapperState.canvasAuthRequired) {
+        $('#bsd-canvas-course-status').text('')
+        return
+    }
     $('#bsd-canvas-course-status')
         .css('color', isError ? '#f9b1b1' : '#b4f7fe')
         .text(text)
 }
 
 function setCanvasFetchStatus(text, isError = false) {
+    syncCanvasAuthStateFromStatus(text, isError)
+    if (mapperState.canvasAuthRequired) {
+        $('#bsd-canvas-fetch-status').text('')
+        return
+    }
     $('#bsd-canvas-fetch-status')
         .css('color', isError ? '#f9b1b1' : '#b4f7fe')
         .text(text)
+}
+
+function isCanvasAuthRequiredMessage(text) {
+    let normalized = String(text || '').trim().toLowerCase()
+    if (!normalized) {
+        return false
+    }
+    return (
+        normalized.includes('canvas session expired or not authenticated') ||
+        normalized.includes('user authorization required') ||
+        normalized.includes('unauthenticated')
+    )
+}
+
+function updateCanvasAuthRequiredUi() {
+    let authRequired = Boolean(mapperState.canvasAuthRequired)
+    $('#bsd-sidepanel').toggleClass('bsd-canvas-auth-required', authRequired)
+    $('#bsd-canvas-auth-callout').toggleClass('bsd-hidden', !authRequired)
+    $('.bsd-canvas-course-inline').toggleClass('bsd-hidden', authRequired)
+    $('#bsd-canvas-assignment-summary').toggleClass('bsd-hidden', authRequired)
+    $('#bsd-refresh-data').toggleClass('bsd-hidden', authRequired)
+    $('#bsd-refresh-activity').toggleClass('bsd-hidden', authRequired || !refreshActionInFlight)
+    $('#bsd-canvas-course-status').toggleClass('bsd-hidden', authRequired)
+    $('#bsd-canvas-fetch-status').toggleClass('bsd-hidden', authRequired)
+    $('#bsd-mapper-status').toggleClass('bsd-hidden', authRequired)
+    $('#bsd-canvas-fetch-progress').toggleClass(
+        'bsd-hidden',
+        authRequired || canvasFetchProgressState.total <= 0
+    )
+    if (authRequired) {
+        $('#bsd-mapper-status').text('')
+        $('#bsd-no-submissions-callout').addClass('bsd-hidden')
+    }
+}
+
+function setCanvasAuthRequired(active) {
+    mapperState.canvasAuthRequired = Boolean(active)
+    if (mapperState.canvasAuthRequired) {
+        mapperState.assignmentHelperExpanded = false
+    }
+    updateCanvasAuthRequiredUi()
+}
+
+function syncCanvasAuthStateFromStatus(text, isError = false) {
+    let shouldRequireAuth = Boolean(isError && isCanvasAuthRequiredMessage(text))
+    if (shouldRequireAuth !== Boolean(mapperState.canvasAuthRequired)) {
+        setCanvasAuthRequired(shouldRequireAuth)
+    }
 }
 
 function clearCanvasFetchProgress() {
@@ -1219,14 +1278,16 @@ function updateCanvasActionButtons() {
     let hasCourse = Boolean(String($('#bsd-canvas-course-select').val() || mapperState.selectedCanvasCourseId || ''))
     let controlsDisabled = canvasFetchInFlight || refreshActionInFlight
     let hasAssignments = getCachedAssignmentsForSelectedCourse().length > 0
+    let authRequired = Boolean(mapperState.canvasAuthRequired)
 
     $('#bsd-load-canvas-courses').prop('disabled', controlsDisabled)
     $('#bsd-canvas-course-select').prop('disabled', controlsDisabled)
-    $('#bsd-refresh-data').prop('disabled', !hasCourse || controlsDisabled)
+    $('#bsd-refresh-data').prop('disabled', authRequired || !hasCourse || controlsDisabled)
     $('#bsd-copy-canvas-assignment').prop('disabled', controlsDisabled || !hasAssignments)
     $('#bsd-toggle-assignment-helper').prop('disabled', controlsDisabled || !hasAssignments)
     updateCopyCanvasAssignmentHelperUi()
     updatePrimaryRefreshButtonUi()
+    updateCanvasAuthRequiredUi()
 }
 
 function setCanvasControlsDisabled(disabled) {
@@ -1330,6 +1391,14 @@ async function fetchCanvasJson(baseUrl, path) {
             body = await response.text()
         } catch (e) {
             // ignore body parsing errors
+        }
+        let normalizedBody = String(body || '').toLowerCase()
+        if (
+            response.status === 401 ||
+            normalizedBody.includes('unauthenticated') ||
+            normalizedBody.includes('authorization required')
+        ) {
+            throw new Error('Canvas session expired or not authenticated. Open a logged-in Canvas tab, then try again.')
         }
         let suffix = body ? ` ${String(body).slice(0, 140)}` : ''
         throw new Error(`Canvas API ${response.status} for ${path}.${suffix}`.trim())
@@ -3324,7 +3393,7 @@ function updateCourseStepUi() {
 function updateCopyCanvasAssignmentVisibility() {
     let hasCourse = hasSelectedCanvasCourse()
     let hasFetched = hasCourse && hasFetchedSubmissionsReady()
-    let showCopyAssignment = hasFetched && !refreshActionInFlight
+    let showCopyAssignment = hasFetched && !refreshActionInFlight && !mapperState.canvasAuthRequired
     $('#bsd-assignment-helper').toggleClass('bsd-hidden', !showCopyAssignment)
     updateCopyCanvasAssignmentHelperUi()
 }
@@ -3334,7 +3403,7 @@ function updateMapperReadyUi() {
     let hasFetched = hasCourse && hasFetchedSubmissionsReady()
     let ready = hasCourse && hasFetched
     let assignmentsLoaded = hasCourse && getCachedAssignmentsForSelectedCourse().length > 0
-    let showFetchPrompt = assignmentsLoaded && !hasFetched && !canvasFetchInFlight
+    let showFetchPrompt = assignmentsLoaded && !hasFetched && !canvasFetchInFlight && !mapperState.canvasAuthRequired
 
     $('.bsd-panel-settings').toggleClass('bsd-no-submissions', !ready)
     $('.bsd-sort-controls').toggleClass('bsd-no-submissions', !ready)
@@ -3344,6 +3413,7 @@ function updateMapperReadyUi() {
     updateCopyCanvasAssignmentVisibility()
     updatePrimaryRefreshButtonUi()
     updateCourseStepUi()
+    updateCanvasAuthRequiredUi()
 }
 
 function buildSynergyAssignmentOptions(selectEl, selectedSynergyAssignment) {
