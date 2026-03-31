@@ -670,6 +670,47 @@
     line-height: 1.3;
 }
 
+#bsd-sidepanel .bsd-copy-assignment-link-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-top: 8px;
+}
+
+#bsd-sidepanel .bsd-copy-assignment-link {
+    color: #7fc7ff;
+    font-size: 11px;
+    font-weight: 700;
+    text-decoration: none;
+}
+
+#bsd-sidepanel .bsd-copy-assignment-link:hover {
+    color: #a8dcff;
+    text-decoration: underline;
+}
+
+#bsd-sidepanel .bsd-copy-assignment-action {
+    background: linear-gradient(180deg, #36566f 0%, #28445a 100%);
+    color: #eff9ff;
+    border: 1px solid #4f7088;
+    border-radius: 4px;
+    min-height: 26px;
+    padding: 4px 8px;
+    font-size: 11px;
+    font-weight: 700;
+    cursor: pointer;
+}
+
+#bsd-sidepanel .bsd-copy-assignment-action:hover:not(:disabled) {
+    background: linear-gradient(180deg, #416683 0%, #32556f 100%);
+}
+
+#bsd-sidepanel .bsd-copy-assignment-action:disabled {
+    opacity: 0.6;
+    cursor: default;
+}
+
 #bsd-sidepanel .bsd-copy-assignment-meta {
     display: flex;
     flex-wrap: wrap;

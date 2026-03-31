@@ -632,6 +632,123 @@ async function copyTextToClipboard(text) {
     }
 }
 
+function escapeHtmlText(text) {
+    return String(text || '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;')
+}
+
+function getCanvasAssignmentUrl(assignment) {
+    if (!assignment || !assignment.id) {
+        return ''
+    }
+
+    let directUrl = String(assignment.html_url || assignment.assignment_url || '').trim()
+    if (directUrl) {
+        return directUrl
+    }
+
+    let baseUrl = normalizeCanvasBaseUrl(mapperState.canvasBaseUrl || '')
+    let courseId = String(assignment.course_id || mapperState.selectedCanvasCourseId || '').trim()
+    let assignmentId = String(assignment.id || '').trim()
+    if (!baseUrl || !courseId || !assignmentId) {
+        return ''
+    }
+
+    return `${baseUrl}/courses/${encodeURIComponent(courseId)}/assignments/${encodeURIComponent(assignmentId)}`
+}
+
+function getCanvasAssignmentLinkLabel(assignment) {
+    let label = normalizeHeaderText(assignment && assignment.name ? assignment.name : assignment && assignment.id ? assignment.id : '')
+    return label
+}
+
+function getCanvasAssignmentFormattedLinkParts(assignment) {
+    let url = getCanvasAssignmentUrl(assignment)
+    let label = getCanvasAssignmentLinkLabel(assignment)
+    if (!url || !label) {
+        return null
+    }
+
+    return {
+        html: `View in Canvas: <a href="${escapeHtmlText(url)}">${escapeHtmlText(label)}</a>`,
+        text: `View in Canvas: ${label} ${url}`
+    }
+}
+
+async function copyHtmlToClipboard(html, textFallback = '') {
+    let safeHtml = String(html || '').trim()
+    let safeText = String(textFallback || '').trim()
+    if (!safeHtml) {
+        return false
+    }
+
+    try {
+        if (
+            navigator.clipboard &&
+            typeof navigator.clipboard.write === 'function' &&
+            typeof ClipboardItem !== 'undefined'
+        ) {
+            await navigator.clipboard.write([
+                new ClipboardItem({
+                    'text/html': new Blob([safeHtml], { type: 'text/html' }),
+                    'text/plain': new Blob([safeText || safeHtml], { type: 'text/plain' })
+                })
+            ])
+            return true
+        }
+    } catch (e) {
+        // fall through to legacy copy paths
+    }
+
+    try {
+        let container = document.createElement('div')
+        container.innerHTML = safeHtml
+        container.setAttribute('contenteditable', 'true')
+        container.style.position = 'fixed'
+        container.style.left = '-9999px'
+        container.style.top = '-9999px'
+        container.style.opacity = '0'
+        document.body.appendChild(container)
+
+        let selection = window.getSelection()
+        let range = document.createRange()
+        range.selectNodeContents(container)
+        selection.removeAllRanges()
+        selection.addRange(range)
+        let copied = document.execCommand('copy')
+        selection.removeAllRanges()
+        document.body.removeChild(container)
+        if (copied) {
+            return true
+        }
+    } catch (e) {
+        // fall through to plain text
+    }
+
+    return copyTextToClipboard(safeText)
+}
+
+function getCanvasShortDate(value) {
+    if (!value) {
+        return ''
+    }
+
+    let parsed = new Date(value)
+    if (Number.isNaN(parsed.getTime())) {
+        return ''
+    }
+
+    return parsed.toLocaleDateString('en-US', {
+        month: 'numeric',
+        day: 'numeric',
+        year: 'numeric'
+    })
+}
+
 function getSelectedCanvasAssignmentLabel(selectEl) {
     let selectedOption = selectEl.find('option:selected')
     let label = normalizeHeaderText(
@@ -1554,9 +1671,28 @@ function updateCopyCanvasAssignmentHelperUi() {
 function renderCopyCanvasAssignmentDetails() {
     let panel = $('#bsd-copy-canvas-assignment-details')
     let nameEl = $('#bsd-copy-canvas-assignment-name')
+    let linkRowEl = $('#bsd-copy-canvas-assignment-link-row')
+    let linkEl = $('#bsd-copy-canvas-assignment-link')
+    let copyNameButton = $('#bsd-copy-canvas-assignment-copy-name')
+    let copyAssignDateButton = $('#bsd-copy-canvas-assignment-copy-assign-date')
+    let copyDueDateButton = $('#bsd-copy-canvas-assignment-copy-due-date')
+    let copyUrlButton = $('#bsd-copy-canvas-assignment-copy-url')
+    let copyFormattedLinkButton = $('#bsd-copy-canvas-assignment-copy-formatted-link')
     let metaEl = $('#bsd-copy-canvas-assignment-meta')
     let outcomesEl = $('#bsd-copy-canvas-assignment-outcomes')
-    if (panel.length === 0 || nameEl.length === 0 || metaEl.length === 0 || outcomesEl.length === 0) {
+    if (
+        panel.length === 0 ||
+        nameEl.length === 0 ||
+        linkRowEl.length === 0 ||
+        linkEl.length === 0 ||
+        copyNameButton.length === 0 ||
+        copyAssignDateButton.length === 0 ||
+        copyDueDateButton.length === 0 ||
+        copyUrlButton.length === 0 ||
+        copyFormattedLinkButton.length === 0 ||
+        metaEl.length === 0 ||
+        outcomesEl.length === 0
+    ) {
         return
     }
 
@@ -1569,6 +1705,14 @@ function renderCopyCanvasAssignmentDetails() {
     if (!assignment) {
         mapperState.copiedCanvasAssignmentId = ''
         nameEl.text('')
+        linkEl.attr('href', '#').removeAttr('title')
+        linkEl.addClass('bsd-hidden')
+        copyNameButton.prop('disabled', true)
+        copyAssignDateButton.prop('disabled', true)
+        copyDueDateButton.prop('disabled', true)
+        copyUrlButton.prop('disabled', true)
+        copyFormattedLinkButton.prop('disabled', true)
+        linkRowEl.addClass('bsd-hidden')
         panel.addClass('bsd-hidden')
         return
     }
@@ -1576,8 +1720,26 @@ function renderCopyCanvasAssignmentDetails() {
     let submissionsByAssignment = getStoredSubmissionsByAssignmentForCourse(assignments)
     let submissions = Array.isArray(submissionsByAssignment[assignmentId]) ? submissionsByAssignment[assignmentId] : []
     let rubrics = getRubrics(assignment)
+    let assignmentLabel = getCanvasAssignmentLinkLabel(assignment)
+    let assignmentUrl = getCanvasAssignmentUrl(assignment)
+    let shortAssignDate = getCanvasShortDate(assignment.created_at)
+    let shortDueDate = getCanvasShortDate(assignment.due_at)
 
     nameEl.text(String(assignment.name || assignmentId))
+
+    if (assignmentUrl) {
+        linkEl.attr('href', assignmentUrl).attr('title', assignmentUrl)
+        linkEl.removeClass('bsd-hidden')
+    } else {
+        linkEl.attr('href', '#').removeAttr('title')
+        linkEl.addClass('bsd-hidden')
+    }
+    linkRowEl.toggleClass('bsd-hidden', !assignmentLabel && !assignmentUrl && !shortAssignDate && !shortDueDate)
+    copyNameButton.prop('disabled', !assignmentLabel)
+    copyAssignDateButton.prop('disabled', !shortAssignDate)
+    copyDueDateButton.prop('disabled', !shortDueDate)
+    copyUrlButton.prop('disabled', !assignmentUrl)
+    copyFormattedLinkButton.prop('disabled', !assignmentUrl)
 
     let metaItems = [
         {
@@ -2064,6 +2226,7 @@ async function fetchCanvasAssignmentsForCourse(courseId, baseUrl) {
             id: String(item.id),
             course_id: String(courseId),
             name: String(item.name || ''),
+            html_url: String(item.html_url || ''),
             use_rubric_for_grading: Boolean(item.use_rubric_for_grading),
             points_possible: item.points_possible,
             rubric: rubric,
@@ -5104,6 +5267,86 @@ function wireUiEvents() {
         }
 
         select.val('')
+    })
+
+    $('#bsd-copy-canvas-assignment-copy-due-date').on('click', async function () {
+        let assignment = getAssignmentById(getCachedAssignmentsForSelectedCourse(), mapperState.copiedCanvasAssignmentId)
+        let shortDueDate = getCanvasShortDate(assignment && assignment.due_at)
+        if (!shortDueDate) {
+            return
+        }
+
+        let copied = await copyTextToClipboard(shortDueDate)
+        if (copied) {
+            showClipboardCopyTooltip(this, 'Copied due date')
+        } else if (!clipboardCopyWarningShown) {
+            setMapperStatus('Could not copy assignment text to clipboard. Check browser clipboard permissions.', true)
+            clipboardCopyWarningShown = true
+        }
+    })
+
+    $('#bsd-copy-canvas-assignment-copy-name').on('click', async function () {
+        let assignment = getAssignmentById(getCachedAssignmentsForSelectedCourse(), mapperState.copiedCanvasAssignmentId)
+        let assignmentLabel = getCanvasAssignmentLinkLabel(assignment)
+        if (!assignmentLabel) {
+            return
+        }
+
+        let copied = await copyTextToClipboard(assignmentLabel)
+        if (copied) {
+            showClipboardCopyTooltip(this, 'Copied assign name')
+        } else if (!clipboardCopyWarningShown) {
+            setMapperStatus('Could not copy assignment text to clipboard. Check browser clipboard permissions.', true)
+            clipboardCopyWarningShown = true
+        }
+    })
+
+    $('#bsd-copy-canvas-assignment-copy-assign-date').on('click', async function () {
+        let assignment = getAssignmentById(getCachedAssignmentsForSelectedCourse(), mapperState.copiedCanvasAssignmentId)
+        let shortAssignDate = getCanvasShortDate(assignment && assignment.created_at)
+        if (!shortAssignDate) {
+            return
+        }
+
+        let copied = await copyTextToClipboard(shortAssignDate)
+        if (copied) {
+            showClipboardCopyTooltip(this, 'Copied assign date')
+        } else if (!clipboardCopyWarningShown) {
+            setMapperStatus('Could not copy assignment text to clipboard. Check browser clipboard permissions.', true)
+            clipboardCopyWarningShown = true
+        }
+    })
+
+    $('#bsd-copy-canvas-assignment-copy-url').on('click', async function () {
+        let assignment = getAssignmentById(getCachedAssignmentsForSelectedCourse(), mapperState.copiedCanvasAssignmentId)
+        let assignmentUrl = getCanvasAssignmentUrl(assignment)
+        if (!assignmentUrl) {
+            return
+        }
+
+        let copied = await copyTextToClipboard(assignmentUrl)
+        if (copied) {
+            showClipboardCopyTooltip(this, 'Copied assignment URL')
+        } else if (!clipboardCopyWarningShown) {
+            setMapperStatus('Could not copy assignment text to clipboard. Check browser clipboard permissions.', true)
+            clipboardCopyWarningShown = true
+        }
+    })
+
+    $('#bsd-copy-canvas-assignment-copy-formatted-link').on('click', async function () {
+        let assignment = getAssignmentById(getCachedAssignmentsForSelectedCourse(), mapperState.copiedCanvasAssignmentId)
+        let linkParts = getCanvasAssignmentFormattedLinkParts(assignment)
+        if (!linkParts) {
+            return
+        }
+
+        let copied = await copyHtmlToClipboard(linkParts.html, linkParts.text)
+        if (copied) {
+            showClipboardCopyTooltip(this, 'Copied formatted link')
+        } else if (!clipboardCopyWarningShown) {
+            setMapperStatus('Could not copy assignment text to clipboard. Check browser clipboard permissions.', true)
+            clipboardCopyWarningShown = true
+        }
     })
 
     $('#bsd-paste-all').on('click', async () => {

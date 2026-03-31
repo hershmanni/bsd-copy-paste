@@ -62,7 +62,7 @@
                 <div class="bsd-assignment-helper-head">
                     <div class="bsd-assignment-helper-copy">
                         <div class="bsd-assignment-helper-title">Assignment Helper</div>
-                        <div class="bsd-assignment-helper-note">Copy a Canvas assignment title while creating the matching Synergy assignment.</div>
+                        <div class="bsd-assignment-helper-note">Copy a Canvas assignment title, assign date, due date, URL, or formatted link while creating the matching Synergy assignment.</div>
                     </div>
                     <button id="bsd-toggle-assignment-helper" type="button">Show Assignment Helper</button>
                 </div>
@@ -71,8 +71,16 @@
                     <select id="bsd-copy-canvas-assignment">
                         <option value="">Select Canvas course first</option>
                     </select>
-                    <div id="bsd-copy-canvas-assignment-details" class="bsd-copy-assignment-details bsd-hidden">
-                        <div id="bsd-copy-canvas-assignment-name" class="bsd-copy-assignment-name"></div>
+                        <div id="bsd-copy-canvas-assignment-details" class="bsd-copy-assignment-details bsd-hidden">
+                            <div id="bsd-copy-canvas-assignment-name" class="bsd-copy-assignment-name"></div>
+                            <div id="bsd-copy-canvas-assignment-link-row" class="bsd-copy-assignment-link-row bsd-hidden">
+                                <a id="bsd-copy-canvas-assignment-link" class="bsd-copy-assignment-link" href="#" target="_blank" rel="noopener noreferrer">Open Canvas assignment</a>
+                                <button id="bsd-copy-canvas-assignment-copy-name" class="bsd-copy-assignment-action" type="button">Copy Assign Name</button>
+                                <button id="bsd-copy-canvas-assignment-copy-assign-date" class="bsd-copy-assignment-action" type="button">Copy Assign Date</button>
+                                <button id="bsd-copy-canvas-assignment-copy-due-date" class="bsd-copy-assignment-action" type="button">Copy Due Date</button>
+                                <button id="bsd-copy-canvas-assignment-copy-url" class="bsd-copy-assignment-action" type="button">Copy URL</button>
+                                <button id="bsd-copy-canvas-assignment-copy-formatted-link" class="bsd-copy-assignment-action" type="button">Copy Formatted Link</button>
+                        </div>
                         <div id="bsd-copy-canvas-assignment-meta" class="bsd-copy-assignment-meta"></div>
                         <div class="bsd-copy-assignment-outcomes-wrap">
                             <div class="bsd-copy-assignment-outcomes-title">Canvas Targets</div>
