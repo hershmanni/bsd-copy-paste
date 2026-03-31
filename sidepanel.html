@@ -71,15 +71,15 @@
                     <select id="bsd-copy-canvas-assignment">
                         <option value="">Select Canvas course first</option>
                     </select>
-                        <div id="bsd-copy-canvas-assignment-details" class="bsd-copy-assignment-details bsd-hidden">
-                            <div id="bsd-copy-canvas-assignment-name" class="bsd-copy-assignment-name"></div>
-                            <div id="bsd-copy-canvas-assignment-link-row" class="bsd-copy-assignment-link-row bsd-hidden">
-                                <a id="bsd-copy-canvas-assignment-link" class="bsd-copy-assignment-link" href="#" target="_blank" rel="noopener noreferrer">Open Canvas assignment</a>
-                                <button id="bsd-copy-canvas-assignment-copy-name" class="bsd-copy-assignment-action" type="button">Copy Assign Name</button>
-                                <button id="bsd-copy-canvas-assignment-copy-assign-date" class="bsd-copy-assignment-action" type="button">Copy Assign Date</button>
-                                <button id="bsd-copy-canvas-assignment-copy-due-date" class="bsd-copy-assignment-action" type="button">Copy Due Date</button>
-                                <button id="bsd-copy-canvas-assignment-copy-url" class="bsd-copy-assignment-action" type="button">Copy URL</button>
-                                <button id="bsd-copy-canvas-assignment-copy-formatted-link" class="bsd-copy-assignment-action" type="button">Copy Formatted Link</button>
+                    <div id="bsd-copy-canvas-assignment-details" class="bsd-copy-assignment-details bsd-hidden">
+                        <div id="bsd-copy-canvas-assignment-name" class="bsd-copy-assignment-name"></div>
+                        <div id="bsd-copy-canvas-assignment-link-row" class="bsd-copy-assignment-link-row bsd-hidden">
+                            <a id="bsd-copy-canvas-assignment-link" class="bsd-copy-assignment-link" href="#" target="_blank" rel="noopener noreferrer">Open Canvas assignment</a>
+                            <button id="bsd-copy-canvas-assignment-copy-name" class="bsd-copy-assignment-action" type="button">Copy Assign Name</button>
+                            <button id="bsd-copy-canvas-assignment-copy-assign-date" class="bsd-copy-assignment-action" type="button">Copy Assign Date</button>
+                            <button id="bsd-copy-canvas-assignment-copy-due-date" class="bsd-copy-assignment-action" type="button">Copy Due Date</button>
+                            <button id="bsd-copy-canvas-assignment-copy-url" class="bsd-copy-assignment-action" type="button">Copy URL</button>
+                            <button id="bsd-copy-canvas-assignment-copy-formatted-link" class="bsd-copy-assignment-action" type="button">Copy Formatted Link</button>
                         </div>
                         <div id="bsd-copy-canvas-assignment-meta" class="bsd-copy-assignment-meta"></div>
                         <div class="bsd-copy-assignment-outcomes-wrap">
@@ -141,6 +141,33 @@
         </div>
 
         <div id="bsd-map-cards"></div>
+
+        <div id="bsd-score-table-modal" class="bsd-score-table-modal bsd-hidden" aria-hidden="true">
+            <div class="bsd-score-table-backdrop"></div>
+            <div class="bsd-score-table-dialog" role="dialog" aria-modal="true" aria-labelledby="bsd-score-table-title">
+                <div class="bsd-score-table-head">
+                    <div class="bsd-score-table-head-copy">
+                        <div id="bsd-score-table-title" class="bsd-score-table-title">Canvas Score Table</div>
+                        <div id="bsd-score-table-subtitle" class="bsd-score-table-subtitle"></div>
+                    </div>
+                    <button id="bsd-score-table-close" type="button">Close</button>
+                </div>
+                <div class="bsd-score-table-toolbar">
+                    <input id="bsd-score-table-search" type="search" placeholder="Filter by student, ID, period, score, or status">
+                    <div id="bsd-score-table-results" class="bsd-score-table-results"></div>
+                </div>
+                <div id="bsd-score-table-empty" class="bsd-score-table-empty bsd-hidden"></div>
+                <div id="bsd-score-table-wrap" class="bsd-score-table-wrap">
+                    <table id="bsd-score-table">
+                        <thead></thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+                <div id="bsd-score-table-note" class="bsd-score-table-note">
+                    <b>Points*</b> show the Canvas entered score and are not pasted by the extension.
+                </div>
+            </div>
+        </div>
     </div>
 
     <script src="scripts/jquery-3.6.3.min.js"></script>

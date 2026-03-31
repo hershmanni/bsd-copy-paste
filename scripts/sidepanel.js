@@ -62,6 +62,15 @@ let canvasFetchProgressState = {
     fetched: 0,
     active: 0
 }
+let scoreTableState = {
+    assignmentId: '',
+    sourceSubmissionCount: 0,
+    submissions: [],
+    rubrics: [],
+    synergyOrderMap: {},
+    sortKey: 'synergy_order',
+    sortDirection: 'asc'
+}
 
 function setMapperStatus(text, isError = false) {
     $('#bsd-mapper-status')
@@ -749,6 +758,483 @@ function getCanvasShortDate(value) {
     })
 }
 
+function getSubmissionDisplayName(submission) {
+    if (!submission || typeof submission !== 'object') {
+        return 'Unknown student'
+    }
+    return String(submission.sortable_name || submission.short_name || submission.synergy_id || submission.canvas_id || 'Unknown student')
+}
+
+function getScoreTableRawSubmissionsForAssignment(assignmentId) {
+    let safeAssignmentId = String(assignmentId || '')
+    let submissions = safeAssignmentId ? mapperState.submissionsByAssignment[safeAssignmentId] : []
+    return Array.isArray(submissions) ? submissions.slice() : []
+}
+
+function getCurrentSynergyStudentOrderMap() {
+    let orderMap = {}
+    let ids = Array.isArray(mapperState.synergyStudentIds) ? mapperState.synergyStudentIds : []
+    ids.forEach((id, idx) => {
+        let normalized = normalizeSynergyId(id)
+        if (!normalized || Object.prototype.hasOwnProperty.call(orderMap, normalized)) {
+            return
+        }
+        orderMap[normalized] = idx + 1
+    })
+    return orderMap
+}
+
+function getScoreTableCurrentSectionSubmissions(submissions) {
+    let list = Array.isArray(submissions) ? submissions : []
+    let visibleIdSet = getSynergyStudentIdSet(mapperState.synergyStudentIds)
+    if (visibleIdSet.size === 0) {
+        return list.slice()
+    }
+
+    return list.filter((submission) => {
+        let synergyId = normalizeSynergyId(submission && submission.synergy_id ? submission.synergy_id : '')
+        return synergyId && visibleIdSet.has(synergyId)
+    })
+}
+
+function getCanvasSpeedGraderUrl(submission) {
+    if (!submission || typeof submission !== 'object') {
+        return ''
+    }
+
+    let baseUrl = normalizeCanvasBaseUrl(mapperState.canvasBaseUrl || '')
+    let courseId = String(submission.course_id || '').trim()
+    let assignmentId = String(submission.assign_id || '').trim()
+    let studentId = String(submission.canvas_id || '').trim()
+    if (!baseUrl || !courseId || !assignmentId || !studentId) {
+        return ''
+    }
+
+    return `${baseUrl}/courses/${encodeURIComponent(courseId)}/gradebook/speed_grader?assignment_id=${encodeURIComponent(assignmentId)}&student_id=${encodeURIComponent(studentId)}`
+}
+
+function getRubricScoreCellText(submission, rubricId) {
+    if (!submission || typeof submission !== 'object') {
+        return ''
+    }
+
+    let assessment = submission.rubric_assessment
+    if (!assessment || typeof assessment !== 'object') {
+        return ''
+    }
+
+    if (!Object.prototype.hasOwnProperty.call(assessment, String(rubricId))) {
+        return '???'
+    }
+
+    let criterion = assessment[String(rubricId)]
+    if (!criterion || !Object.prototype.hasOwnProperty.call(criterion, 'points') || criterion.points == null) {
+        return '???'
+    }
+
+    return String(criterion.points)
+}
+
+function compareSubmissionsForScoreTable(left, right) {
+    let periodCompare = compareTextAsc(left && left.period ? left.period : '', right && right.period ? right.period : '')
+    if (periodCompare !== 0) {
+        return periodCompare
+    }
+
+    let nameCompare = compareTextAsc(getSubmissionDisplayName(left), getSubmissionDisplayName(right))
+    if (nameCompare !== 0) {
+        return nameCompare
+    }
+
+    return compareTextAsc(left && left.synergy_id ? left.synergy_id : '', right && right.synergy_id ? right.synergy_id : '')
+}
+
+function getScoreTableSynergyOrderValue(submission, orderMap = null) {
+    let source = orderMap || scoreTableState.synergyOrderMap || {}
+    let synergyId = normalizeSynergyId(submission && submission.synergy_id ? submission.synergy_id : '')
+    if (synergyId && Object.prototype.hasOwnProperty.call(source, synergyId)) {
+        return Number(source[synergyId])
+    }
+    return Number.MAX_SAFE_INTEGER
+}
+
+function getScoreTableSynergyOrderDisplay(submission, orderMap = null) {
+    let value = getScoreTableSynergyOrderValue(submission, orderMap)
+    return value === Number.MAX_SAFE_INTEGER ? '' : String(value)
+}
+
+function compareScoreTableSubmissionsBySynergyOrder(left, right, orderMap = null) {
+    let leftOrder = getScoreTableSynergyOrderValue(left, orderMap)
+    let rightOrder = getScoreTableSynergyOrderValue(right, orderMap)
+    if (leftOrder !== rightOrder) {
+        return leftOrder - rightOrder
+    }
+    return compareSubmissionsForScoreTable(left, right)
+}
+
+function getScoreTableFlagCell(value) {
+    return value ? '&#10003;' : ''
+}
+
+function getSortableScoreTableCellValue(rawValue) {
+    if (rawValue == null) {
+        return { rank: 3, text: '', number: 0 }
+    }
+
+    let text = String(rawValue).trim()
+    if (!text) {
+        return { rank: 3, text: '', number: 0 }
+    }
+    if (text === '???') {
+        return { rank: 2, text: text, number: 0 }
+    }
+
+    let parsed = Number(text)
+    if (Number.isFinite(parsed)) {
+        return { rank: 0, text: text, number: parsed }
+    }
+
+    return { rank: 1, text: text, number: 0 }
+}
+
+function compareScoreTableCellValues(leftValue, rightValue, sortDirection = 'asc') {
+    let left = getSortableScoreTableCellValue(leftValue)
+    let right = getSortableScoreTableCellValue(rightValue)
+    if (left.rank !== right.rank) {
+        return left.rank - right.rank
+    }
+
+    if (left.rank === 0 && left.number !== right.number) {
+        return sortDirection === 'desc' ? right.number - left.number : left.number - right.number
+    }
+
+    let textCompare = compareTextAsc(left.text, right.text)
+    return sortDirection === 'desc' ? -textCompare : textCompare
+}
+
+function compareScoreTableSubmissions(left, right, sortKey = 'synergy_order', sortDirection = 'asc', orderMap = null) {
+    let compare = 0
+
+    if (sortKey === 'synergy_order') {
+        compare = compareScoreTableSubmissionsBySynergyOrder(left, right, orderMap)
+        if (compare !== 0) {
+            return sortDirection === 'desc' ? -compare : compare
+        }
+        return 0
+    }
+
+    if (sortKey === 'period') {
+        compare = compareTextAsc(left && left.period ? left.period : '', right && right.period ? right.period : '')
+        compare = sortDirection === 'desc' ? -compare : compare
+    } else if (sortKey === 'synergy_id') {
+        compare = compareTextAsc(
+            normalizeSynergyId(left && left.synergy_id ? left.synergy_id : ''),
+            normalizeSynergyId(right && right.synergy_id ? right.synergy_id : '')
+        )
+        compare = sortDirection === 'desc' ? -compare : compare
+    } else if (sortKey === 'name') {
+        compare = compareTextAsc(getSubmissionDisplayName(left), getSubmissionDisplayName(right))
+        compare = sortDirection === 'desc' ? -compare : compare
+    } else if (sortKey === 'missing' || sortKey === 'late' || sortKey === 'excused') {
+        compare = Number(Boolean(left && left[sortKey])) - Number(Boolean(right && right[sortKey]))
+        compare = sortDirection === 'desc' ? -compare : compare
+    } else if (sortKey === 'points') {
+        compare = compareScoreTableCellValues(
+            left && left.entered_score != null ? String(left.entered_score) : '',
+            right && right.entered_score != null ? String(right.entered_score) : '',
+            sortDirection
+        )
+    } else if (sortKey.startsWith('rubric:')) {
+        let rubricId = String(sortKey.split(':').slice(1).join(':') || '')
+        compare = compareScoreTableCellValues(
+            getRubricScoreCellText(left, rubricId),
+            getRubricScoreCellText(right, rubricId),
+            sortDirection
+        )
+    }
+
+    if (compare !== 0) {
+        return compare
+    }
+
+    return compareScoreTableSubmissionsBySynergyOrder(left, right, orderMap)
+}
+
+function buildScoreTableFilterText(submission, rubrics) {
+    let parts = [
+        getScoreTableSynergyOrderDisplay(submission),
+        submission && submission.period ? submission.period : '',
+        submission && submission.synergy_id ? submission.synergy_id : '',
+        submission && submission.canvas_id ? submission.canvas_id : '',
+        submission && submission.short_name ? submission.short_name : '',
+        submission && submission.sortable_name ? submission.sortable_name : '',
+        submission && submission.entered_score != null ? String(submission.entered_score) : '',
+        submission && submission.missing ? 'missing' : '',
+        submission && submission.late ? 'late' : '',
+        submission && submission.excused ? 'excused' : ''
+    ]
+
+    ;(Array.isArray(rubrics) ? rubrics : []).forEach((rubric) => {
+        parts.push(getRubricScoreCellText(submission, rubric && rubric.id ? rubric.id : ''))
+        parts.push(rubric && rubric.alt_code ? rubric.alt_code : '')
+        parts.push(rubric && rubric.alt_text ? rubric.alt_text : '')
+    })
+
+    return parts
+        .join(' ')
+        .toLowerCase()
+        .replace(/\s+/g, ' ')
+        .trim()
+}
+
+function getScoreTableSortIndicator(sortKey) {
+    if (scoreTableState.sortKey !== sortKey) {
+        return '&#8597;'
+    }
+    return scoreTableState.sortDirection === 'desc' ? '&#9660;' : '&#9650;'
+}
+
+function buildScoreTableHeaderCellHtml(label, sortKey, title = '') {
+    let active = scoreTableState.sortKey === sortKey
+    let ariaSort = active ? (scoreTableState.sortDirection === 'desc' ? 'descending' : 'ascending') : 'none'
+    let buttonTitle = title ? ` title="${escapeHtmlText(title)}"` : ''
+    return (
+        `<th aria-sort="${ariaSort}">` +
+        `<button type="button" class="bsd-score-table-sort${active ? ' bsd-score-table-sort-active' : ''}" data-sort-key="${escapeHtmlText(sortKey)}"${buttonTitle}>` +
+        `<span class="bsd-score-table-sort-label">${escapeHtmlText(label)}</span>` +
+        `<span class="bsd-score-table-sort-indicator" aria-hidden="true">${getScoreTableSortIndicator(sortKey)}</span>` +
+        `</button>` +
+        `</th>`
+    )
+}
+
+function updateScoreTableResults(visibleCount, totalCount, filterText = '') {
+    let resultsEl = $('#bsd-score-table-results')
+    if (resultsEl.length === 0) {
+        return
+    }
+
+    if (totalCount <= 0) {
+        resultsEl.text('No submissions loaded')
+        return
+    }
+
+    if (filterText) {
+        resultsEl.text(`Showing ${visibleCount} of ${totalCount} students`)
+        return
+    }
+
+    resultsEl.text(`${totalCount} student${totalCount === 1 ? '' : 's'}`)
+}
+
+function applyScoreTableSearchFilter() {
+    let searchEl = $('#bsd-score-table-search')
+    let rows = $('#bsd-score-table tbody tr')
+    let emptyEl = $('#bsd-score-table-empty')
+    let wrapEl = $('#bsd-score-table-wrap')
+    let noteEl = $('#bsd-score-table-note')
+    let filterText = String(searchEl.val() || '').toLowerCase().trim()
+    let totalCount = rows.length
+    let visibleCount = 0
+
+    rows.each((_, rowEl) => {
+        let row = $(rowEl)
+        let haystack = String(row.attr('data-filter') || '')
+        let isVisible = !filterText || haystack.includes(filterText)
+        row.toggleClass('bsd-hidden', !isVisible)
+        if (isVisible) {
+            visibleCount += 1
+        }
+    })
+
+    updateScoreTableResults(visibleCount, totalCount, filterText)
+
+    if (totalCount === 0) {
+        let emptyMessage = scoreTableState.sourceSubmissionCount > 0
+            ? 'No fetched submissions match the current Synergy section.'
+            : 'No Canvas submissions were found for this assignment.'
+        emptyEl.text(emptyMessage).removeClass('bsd-hidden')
+        wrapEl.addClass('bsd-hidden')
+        noteEl.addClass('bsd-hidden')
+        return
+    }
+
+    wrapEl.removeClass('bsd-hidden')
+    noteEl.removeClass('bsd-hidden')
+
+    if (visibleCount === 0) {
+        emptyEl.text('No rows match the current filter.').removeClass('bsd-hidden')
+        return
+    }
+
+    emptyEl.addClass('bsd-hidden')
+}
+
+function renderScoreTableModalTable() {
+    let rubrics = Array.isArray(scoreTableState.rubrics) ? scoreTableState.rubrics : []
+    let submissions = Array.isArray(scoreTableState.submissions) ? scoreTableState.submissions.slice() : []
+    let tableHead = $('#bsd-score-table thead')
+    let tableBody = $('#bsd-score-table tbody')
+    if (tableHead.length === 0 || tableBody.length === 0) {
+        return
+    }
+
+    submissions.sort((left, right) => compareScoreTableSubmissions(
+        left,
+        right,
+        scoreTableState.sortKey,
+        scoreTableState.sortDirection,
+        scoreTableState.synergyOrderMap
+    ))
+
+    let headerHtml = '<tr>'
+    headerHtml += buildScoreTableHeaderCellHtml('Row', 'synergy_order', 'Match current Synergy row order')
+    headerHtml += buildScoreTableHeaderCellHtml('Period', 'period')
+    headerHtml += buildScoreTableHeaderCellHtml('Synergy ID', 'synergy_id')
+    headerHtml += buildScoreTableHeaderCellHtml('Name', 'name')
+
+    rubrics.forEach((rubric) => {
+        let label = String(rubric && rubric.alt_code ? rubric.alt_code : rubric && rubric.id ? rubric.id : '')
+        let title = [rubric && rubric.alt_code ? rubric.alt_code : '', rubric && rubric.alt_text ? rubric.alt_text : '']
+            .filter(Boolean)
+            .join(' - ')
+        headerHtml += buildScoreTableHeaderCellHtml(label, `rubric:${String(rubric && rubric.id ? rubric.id : '')}`, title)
+    })
+
+    headerHtml += buildScoreTableHeaderCellHtml('Missing', 'missing')
+    headerHtml += buildScoreTableHeaderCellHtml('Late', 'late')
+    headerHtml += buildScoreTableHeaderCellHtml('Excused', 'excused')
+    headerHtml += buildScoreTableHeaderCellHtml('Points*', 'points', 'Canvas entered score')
+    headerHtml += '</tr>'
+    tableHead.html(headerHtml)
+
+    let rowsHtml = ''
+    submissions.forEach((submission) => {
+        let name = getSubmissionDisplayName(submission)
+        let speedGraderUrl = getCanvasSpeedGraderUrl(submission)
+        let nameCell = escapeHtmlText(name)
+        if (speedGraderUrl) {
+            nameCell = `<a href="${escapeHtmlText(speedGraderUrl)}" target="_blank" rel="noopener noreferrer">${nameCell}</a>`
+        }
+
+        rowsHtml += `<tr data-filter="${escapeHtmlText(buildScoreTableFilterText(submission, rubrics))}">`
+        rowsHtml += `<td class="bsd-score-table-row-order">${escapeHtmlText(getScoreTableSynergyOrderDisplay(submission, scoreTableState.synergyOrderMap))}</td>`
+        rowsHtml += `<td>${escapeHtmlText(String(submission && submission.period ? submission.period : ''))}</td>`
+        rowsHtml += `<td>${escapeHtmlText(String(submission && submission.synergy_id ? submission.synergy_id : ''))}</td>`
+        rowsHtml += `<td class="bsd-score-table-name">${nameCell}</td>`
+
+        rubrics.forEach((rubric) => {
+            let scoreText = getRubricScoreCellText(submission, rubric && rubric.id ? rubric.id : '')
+            let cellClass = scoreText === '???' ? 'bsd-score-table-unknown' : scoreText ? '' : 'bsd-score-table-empty'
+            rowsHtml += `<td class="${cellClass}">${escapeHtmlText(scoreText)}</td>`
+        })
+
+        rowsHtml += `<td class="bsd-score-table-flag">${getScoreTableFlagCell(Boolean(submission && submission.missing))}</td>`
+        rowsHtml += `<td class="bsd-score-table-flag">${getScoreTableFlagCell(Boolean(submission && submission.late))}</td>`
+        rowsHtml += `<td class="bsd-score-table-flag">${getScoreTableFlagCell(Boolean(submission && submission.excused))}</td>`
+        rowsHtml += `<td>${escapeHtmlText(submission && submission.entered_score != null ? String(submission.entered_score) : '')}</td>`
+        rowsHtml += '</tr>'
+    })
+
+    tableBody.html(rowsHtml)
+    applyScoreTableSearchFilter()
+}
+
+function closeScoreTableModal() {
+    let modal = $('#bsd-score-table-modal')
+    if (modal.length === 0) {
+        return
+    }
+
+    scoreTableState.assignmentId = ''
+    scoreTableState.sourceSubmissionCount = 0
+    scoreTableState.submissions = []
+    scoreTableState.rubrics = []
+    scoreTableState.synergyOrderMap = {}
+    scoreTableState.sortKey = 'synergy_order'
+    scoreTableState.sortDirection = 'asc'
+    modal.addClass('bsd-hidden').attr('aria-hidden', 'true')
+}
+
+function openScoreTableModalForAssignment(assignmentId) {
+    let safeAssignmentId = String(assignmentId || '')
+    if (!safeAssignmentId) {
+        setMapperStatus('Choose a Canvas assignment before opening the score table.', true)
+        return
+    }
+
+    let assignment = getAssignmentById(mapperState.assignments, safeAssignmentId)
+    if (!assignment) {
+        setMapperStatus('Canvas assignment details were not found for this tile.', true)
+        return
+    }
+
+    let visibleSynergyIdCount = getSynergyStudentIdSet(mapperState.synergyStudentIds).size
+    let hasSectionContext = visibleSynergyIdCount > 0
+    let sourceSubmissions = getScoreTableRawSubmissionsForAssignment(safeAssignmentId)
+    let submissions = getScoreTableCurrentSectionSubmissions(sourceSubmissions)
+    let rubrics = getRubrics(assignment)
+    let titleEl = $('#bsd-score-table-title')
+    let subtitleEl = $('#bsd-score-table-subtitle')
+    let searchEl = $('#bsd-score-table-search')
+    let modal = $('#bsd-score-table-modal')
+
+    if (
+        titleEl.length === 0 ||
+        subtitleEl.length === 0 ||
+        searchEl.length === 0 ||
+        modal.length === 0
+    ) {
+        return
+    }
+
+    titleEl.text(`Canvas Score Table: ${String(assignment.name || safeAssignmentId)}`)
+
+    let missingCount = submissions.filter((submission) => Boolean(submission && submission.missing)).length
+    let lateCount = submissions.filter((submission) => Boolean(submission && submission.late)).length
+    let excusedCount = submissions.filter((submission) => Boolean(submission && submission.excused)).length
+    let sectionSummary = hasSectionContext
+        ? `${submissions.length} row${submissions.length === 1 ? '' : 's'} in current Synergy section`
+        : `${submissions.length} fetched row${submissions.length === 1 ? '' : 's'}`
+    if (hasSectionContext && sourceSubmissions.length !== submissions.length) {
+        sectionSummary += ` (${sourceSubmissions.length} fetched)`
+    }
+    subtitleEl.text(
+        `${sectionSummary} • ` +
+        `${rubrics.length} target${rubrics.length === 1 ? '' : 's'} • ` +
+        `${missingCount} missing • ${lateCount} late • ${excusedCount} excused`
+    )
+
+    scoreTableState.assignmentId = safeAssignmentId
+    scoreTableState.sourceSubmissionCount = sourceSubmissions.length
+    scoreTableState.submissions = submissions
+    scoreTableState.rubrics = rubrics
+    scoreTableState.synergyOrderMap = getCurrentSynergyStudentOrderMap()
+    scoreTableState.sortKey = 'synergy_order'
+    scoreTableState.sortDirection = 'asc'
+
+    searchEl.val('')
+    modal.removeClass('bsd-hidden').attr('aria-hidden', 'false')
+    renderScoreTableModalTable()
+    window.setTimeout(() => {
+        let input = searchEl.get(0)
+        if (input && typeof input.focus === 'function') {
+            input.focus()
+        }
+    }, 0)
+}
+
+function updateCardScoreTableButtonState(card) {
+    if (!card || card.length === 0) {
+        return
+    }
+
+    let assignmentId = getCardCanvasAssignment(card)
+    let submissions = getScoreTableCurrentSectionSubmissions(getScoreTableRawSubmissionsForAssignment(assignmentId))
+    let enabled = Boolean(assignmentId && Array.isArray(submissions) && submissions.length > 0)
+    card.find('.bsd-card-show-score-table').prop('disabled', !enabled)
+}
+
 function getSelectedCanvasAssignmentLabel(selectEl) {
     let selectedOption = selectEl.find('option:selected')
     let label = normalizeHeaderText(
@@ -970,6 +1456,7 @@ function compactSubmissionForCache(submission) {
         sortable_name: String(row.sortable_name || ''),
         period: String(row.period || ''),
         posted_at: row.posted_at ? String(row.posted_at) : '',
+        entered_score: row.entered_score == null ? null : row.entered_score,
         excused: Boolean(row.excused),
         late: Boolean(row.late),
         missing: Boolean(row.missing),
@@ -2318,6 +2805,7 @@ async function fetchCanvasSubmissionsForAssignment(courseId, assignment, student
                 canvas_id: String(item && item.user_id ? item.user_id : ''),
                 assign_id: String(assignment.id),
                 posted_at: item ? item.posted_at : null,
+                entered_score: item && Object.prototype.hasOwnProperty.call(item, 'entered_score') ? item.entered_score : null,
                 excused: Boolean(item && item.excused),
                 late: Boolean(item && item.late),
                 missing: Boolean(item && item.missing),
@@ -4249,6 +4737,7 @@ function createMapperCard(cardData = {}) {
                         <select class="bsd-card-canvas-assign-select"></select>
                     </div>
                     <div class="bsd-card-assignment-actions">
+                        <button class="bsd-card-show-score-table" type="button">Show Score Table</button>
                         <button class="bsd-card-paste" type="button">Paste</button>
                         <button class="bsd-card-remove bsd-x-remove" type="button" title="Remove assignment">x</button>
                     </div>
@@ -4264,6 +4753,7 @@ function createMapperCard(cardData = {}) {
                         <div class="bsd-canvas-updated">-</div>
                     </div>
                     <div class="bsd-card-assignment-actions bsd-card-assignment-actions-placeholder" aria-hidden="true">
+                        <button class="bsd-card-show-score-table" type="button" tabindex="-1">Show Score Table</button>
                         <button class="bsd-card-paste" type="button" tabindex="-1">Paste</button>
                         <button class="bsd-card-remove bsd-x-remove" type="button" tabindex="-1">x</button>
                     </div>
@@ -4355,6 +4845,10 @@ function createMapperCard(cardData = {}) {
         for (let i = 0; i < rows.length; i++) {
             await pasteSingleRow($(rows[i]), tab)
         }
+    })
+
+    card.find('.bsd-card-show-score-table').on('click', () => {
+        openScoreTableModalForAssignment(getCardCanvasAssignment(card))
     })
 
     let rowSeeds = normalized.rows
@@ -4931,6 +5425,7 @@ function updateCardPasteStates(card) {
         updateRowMatchHighlight(row)
     })
     updateCardPasteButtonState(card)
+    updateCardScoreTableButtonState(card)
     updateCardMatchHighlight(card)
     let mappingState = getCardMappingState(card)
     card.toggleClass('bsd-card-ready', mappingState.complete)
@@ -5346,6 +5841,39 @@ function wireUiEvents() {
         } else if (!clipboardCopyWarningShown) {
             setMapperStatus('Could not copy assignment text to clipboard. Check browser clipboard permissions.', true)
             clipboardCopyWarningShown = true
+        }
+    })
+
+    $('#bsd-score-table-close').on('click', () => {
+        closeScoreTableModal()
+    })
+
+    $('#bsd-score-table-modal .bsd-score-table-backdrop').on('click', () => {
+        closeScoreTableModal()
+    })
+
+    $('#bsd-score-table-search').on('input', () => {
+        applyScoreTableSearchFilter()
+    })
+
+    $('#bsd-score-table thead').on('click', '.bsd-score-table-sort', function () {
+        let sortKey = String($(this).attr('data-sort-key') || '')
+        if (!sortKey) {
+            return
+        }
+
+        if (scoreTableState.sortKey === sortKey) {
+            scoreTableState.sortDirection = scoreTableState.sortDirection === 'desc' ? 'asc' : 'desc'
+        } else {
+            scoreTableState.sortKey = sortKey
+            scoreTableState.sortDirection = 'asc'
+        }
+        renderScoreTableModalTable()
+    })
+
+    $(document).on('keydown', (event) => {
+        if (event.key === 'Escape' && !$('#bsd-score-table-modal').hasClass('bsd-hidden')) {
+            closeScoreTableModal()
         }
     })
 

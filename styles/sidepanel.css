@@ -582,6 +582,214 @@
     color: #ffdede;
 }
 
+#bsd-sidepanel .bsd-score-table-modal {
+    position: fixed;
+    inset: 0;
+    z-index: 9999;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 18px;
+}
+
+#bsd-sidepanel .bsd-score-table-backdrop {
+    position: absolute;
+    inset: 0;
+    background: rgba(8, 13, 19, 0.78);
+    backdrop-filter: blur(2px);
+}
+
+#bsd-sidepanel .bsd-score-table-dialog {
+    position: relative;
+    z-index: 1;
+    width: min(1180px, calc(100vw - 36px));
+    max-height: calc(100vh - 36px);
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    padding: 14px;
+    border: 1px solid rgba(95, 170, 255, 0.28);
+    border-radius: 12px;
+    background: linear-gradient(180deg, rgba(23, 31, 40, 0.985) 0%, rgba(18, 24, 32, 0.985) 100%);
+    box-shadow: 0 20px 50px rgba(0, 0, 0, 0.45);
+}
+
+#bsd-sidepanel .bsd-score-table-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+}
+
+#bsd-sidepanel .bsd-score-table-head-copy {
+    min-width: 0;
+}
+
+#bsd-sidepanel .bsd-score-table-title {
+    color: #edf7ff;
+    font-size: 15px;
+    font-weight: 700;
+    line-height: 1.25;
+}
+
+#bsd-sidepanel .bsd-score-table-subtitle {
+    margin-top: 4px;
+    color: #9cb8d1;
+    font-size: 12px;
+    line-height: 1.35;
+}
+
+#bsd-sidepanel .bsd-score-table-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+#bsd-sidepanel #bsd-score-table-search {
+    flex: 1 1 280px;
+    min-width: 220px;
+    background: #2b3138;
+    color: #ffffff;
+    border: 1px solid #586473;
+    border-radius: 6px;
+    min-height: 32px;
+    padding: 6px 10px;
+}
+
+#bsd-sidepanel .bsd-score-table-results {
+    color: #b9d4eb;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+#bsd-sidepanel #bsd-score-table-empty {
+    padding: 10px 12px;
+    border: 1px solid rgba(244, 188, 107, 0.34);
+    border-radius: 8px;
+    background: rgba(83, 64, 23, 0.35);
+    color: #ffe9b6;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+#bsd-sidepanel .bsd-score-table-wrap {
+    overflow: auto;
+    border: 1px solid #364656;
+    border-radius: 8px;
+    background: rgba(22, 29, 38, 0.96);
+}
+
+#bsd-sidepanel #bsd-score-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12px;
+}
+
+#bsd-sidepanel #bsd-score-table th,
+#bsd-sidepanel #bsd-score-table td {
+    padding: 7px 8px;
+    border-bottom: 1px solid #33414f;
+    white-space: nowrap;
+    text-align: left;
+}
+
+#bsd-sidepanel #bsd-score-table thead th {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    background: #24303c;
+    color: #dff0ff;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+}
+
+#bsd-sidepanel .bsd-score-table-sort {
+    width: 100%;
+    display: inline-flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 6px;
+    padding: 0;
+    border: none;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    text-transform: inherit;
+    letter-spacing: inherit;
+    cursor: pointer;
+}
+
+#bsd-sidepanel .bsd-score-table-sort:hover {
+    color: #ffffff;
+}
+
+#bsd-sidepanel .bsd-score-table-sort-active {
+    color: #9ed9ff;
+}
+
+#bsd-sidepanel .bsd-score-table-sort-indicator {
+    color: #86b9dd;
+    font-size: 10px;
+    line-height: 1;
+    flex: 0 0 auto;
+}
+
+#bsd-sidepanel #bsd-score-table tbody tr:nth-child(even) {
+    background: rgba(38, 49, 61, 0.56);
+}
+
+#bsd-sidepanel #bsd-score-table tbody tr:hover {
+    background: rgba(60, 83, 106, 0.44);
+}
+
+#bsd-sidepanel #bsd-score-table .bsd-score-table-name a {
+    color: #8ad0ff;
+    text-decoration: none;
+}
+
+#bsd-sidepanel #bsd-score-table .bsd-score-table-name a:hover {
+    text-decoration: underline;
+}
+
+#bsd-sidepanel #bsd-score-table .bsd-score-table-row-order {
+    color: #9cc3de;
+    text-align: center;
+    font-variant-numeric: tabular-nums;
+}
+
+#bsd-sidepanel #bsd-score-table .bsd-score-table-empty {
+    color: #6d859d;
+}
+
+#bsd-sidepanel #bsd-score-table .bsd-score-table-unknown {
+    color: #ffd699;
+    font-weight: 700;
+}
+
+#bsd-sidepanel #bsd-score-table .bsd-score-table-flag {
+    text-align: center;
+    color: #8ce0a5;
+    font-weight: 700;
+}
+
+#bsd-sidepanel .bsd-score-table-note {
+    color: #a9c3d9;
+    font-size: 11px;
+    line-height: 1.4;
+}
+
+#bsd-sidepanel #bsd-score-table-close {
+    background: linear-gradient(180deg, #3e5b72 0%, #2f485e 100%);
+    color: #eff9ff;
+    font-weight: 700;
+}
+
+#bsd-sidepanel #bsd-score-table-close:hover {
+    background: linear-gradient(180deg, #4c6b85 0%, #3b586f 100%);
+}
+
 #bsd-sidepanel .bsd-assignment-helper {
     margin-top: 10px;
     padding: 10px;
@@ -1053,6 +1261,15 @@
     color: #f4fff8;
 }
 
+#bsd-sidepanel .bsd-card-show-score-table {
+    background: linear-gradient(180deg, #4f6d88 0%, #3a5268 100%);
+    color: #eef7ff;
+}
+
+#bsd-sidepanel .bsd-card-show-score-table:hover:not(:disabled) {
+    background: linear-gradient(180deg, #5d7d98 0%, #46617a 100%);
+}
+
 #bsd-sidepanel .bsd-card-paste:hover {
     background: linear-gradient(180deg, #3cc78c 0%, #2aa673 100%);
 }
@@ -1228,6 +1445,25 @@
 }
 
 @media (max-width: 780px) {
+    #bsd-sidepanel .bsd-score-table-dialog {
+        width: min(100vw - 20px, 1180px);
+        max-height: calc(100vh - 20px);
+        padding: 12px;
+    }
+
+    #bsd-sidepanel .bsd-score-table-head {
+        flex-wrap: wrap;
+    }
+
+    #bsd-sidepanel .bsd-score-table-toolbar {
+        align-items: stretch;
+    }
+
+    #bsd-sidepanel #bsd-score-table-search {
+        min-width: 0;
+        width: 100%;
+    }
+
     .bsd-card-head {
         flex-wrap: wrap;
         align-items: center;
@@ -1285,6 +1521,16 @@
 }
 
 @media (max-width: 400px) {
+    #bsd-sidepanel .bsd-score-table-modal {
+        padding: 10px;
+    }
+
+    #bsd-sidepanel .bsd-score-table-dialog {
+        width: calc(100vw - 20px);
+        max-height: calc(100vh - 20px);
+        padding: 10px;
+    }
+
     #bsd-sidepanel .bsd-canvas-course-inline {
         grid-template-columns: 1fr;
         align-items: flex-start;
