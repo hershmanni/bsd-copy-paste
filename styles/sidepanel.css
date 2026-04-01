@@ -1083,7 +1083,7 @@
     border-radius: 6px;
     padding: 8px;
     background: #262d35;
-    transition: border-left-color 120ms ease, border-bottom-color 120ms ease, box-shadow 120ms ease;
+    transition: border-left-color 120ms ease, border-bottom-color 120ms ease, box-shadow 120ms ease, opacity 120ms ease, filter 120ms ease;
 }
 
 .bsd-card-head {
@@ -1181,6 +1181,30 @@
 
 .bsd-section-head .bsd-standards-title {
     margin-bottom: 0;
+}
+
+.bsd-assignment-head {
+    flex-wrap: wrap;
+}
+
+.bsd-card-paste-all-toggle-wrap {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    color: #a6bdd0;
+    font-size: 11px;
+    line-height: 1.2;
+    cursor: pointer;
+    user-select: none;
+}
+
+.bsd-card-paste-all-toggle-wrap input {
+    margin: 0;
+    accent-color: #57b685;
+}
+
+.bsd-card-paste-all-toggle-wrap input:disabled + span {
+    opacity: 0.55;
 }
 
 .bsd-card-assignment-row {
@@ -1374,6 +1398,18 @@
     border-left-color: rgba(126, 203, 100, 0.96);
     border-bottom-color: rgba(126, 203, 100, 0.96);
     box-shadow: inset 0 0 0 1px rgba(126, 203, 100, 0.18);
+}
+
+.bsd-map-card.bsd-card-excluded-from-paste-all {
+    opacity: 0.48;
+    filter: saturate(0.5) brightness(0.8);
+    border-left-color: rgba(127, 144, 159, 0.92);
+    border-bottom-color: rgba(127, 144, 159, 0.8);
+    box-shadow: inset 0 0 0 1px rgba(127, 144, 159, 0.18);
+}
+
+.bsd-map-card.bsd-card-excluded-from-paste-all .bsd-card-paste-all-toggle-wrap {
+    color: #d8e4ef;
 }
 
 .bsd-map-row.bsd-row-unmatched-target {

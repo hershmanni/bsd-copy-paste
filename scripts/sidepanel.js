@@ -1,6 +1,7 @@
 const mapperStorageKey = 'synergyColumnMappings'
 const mapperMappingsByPairStorageKey = 'synergyColumnMappingsByPair'
 const manualAlignmentsByPairStorageKey = 'manualAlignmentsByPair'
+const pasteAllExclusionsByPairStorageKey = 'pasteAllExclusionsByPair'
 const synergyCanvasMatchStorageKey = 'synergyCanvasCourseMatches'
 const mapperSortMethodStorageKey = 'mapperSortMethod'
 const canvasAssignmentsByCourseStorageKey = 'canvasAssignmentsByCourse'
@@ -41,7 +42,8 @@ let mapperState = {
     sortMethod: defaultMapperSortMethod,
     mappings: [],
     mappingsByPair: {},
-    manualAlignmentsByPair: {}
+    manualAlignmentsByPair: {},
+    pasteAllExclusionsByPair: {}
 }
 
 let mappingCardCounter = 0
@@ -81,7 +83,6 @@ function setMapperStatus(text, isError = false) {
 function setPasteAllActivity(active, text = 'Pasting...') {
     let activity = $('#bsd-paste-all-activity')
     let activityText = $('#bsd-paste-all-activity-text')
-    let button = $('#bsd-paste-all')
 
     if (activityText.length > 0) {
         activityText.text(String(text || 'Pasting...'))
@@ -89,12 +90,12 @@ function setPasteAllActivity(active, text = 'Pasting...') {
 
     if (active) {
         activity.removeClass('bsd-hidden')
-        button.prop('disabled', true)
+        updatePasteAllButtonState()
         return
     }
 
     activity.addClass('bsd-hidden')
-    button.prop('disabled', !hasPasteReadyMappings())
+    updatePasteAllButtonState()
 }
 
 function setRefreshActivity(active, text = 'Refreshing...') {
@@ -530,6 +531,146 @@ function setStoredManualAlignmentsForPairKey(pairKey, manualSet) {
     let byPair = ensurePlainObject(mapperState.manualAlignmentsByPair)
     byPair[key] = normalizeManualAlignmentSet(manualSet)
     mapperState.manualAlignmentsByPair = byPair
+}
+
+function normalizePasteAllExclusions(rawSet) {
+    let source = ensurePlainObject(rawSet)
+    let normalized = {}
+
+    Object.keys(source).forEach((synergyKey) => {
+        let normalizedKey = String(synergyKey || '').trim()
+        if (normalizedKey && Boolean(source[synergyKey])) {
+            normalized[normalizedKey] = true
+        }
+    })
+
+    return normalized
+}
+
+function getStoredPasteAllExclusionsForPairKey(pairKey) {
+    let key = String(pairKey || '')
+    if (!key) {
+        return {}
+    }
+    let byPair = ensurePlainObject(mapperState.pasteAllExclusionsByPair)
+    return normalizePasteAllExclusions(byPair[key])
+}
+
+function setStoredPasteAllExclusionsForPairKey(pairKey, exclusions) {
+    let key = String(pairKey || '')
+    if (!key) {
+        return
+    }
+    let byPair = ensurePlainObject(mapperState.pasteAllExclusionsByPair)
+    byPair[key] = normalizePasteAllExclusions(exclusions)
+    mapperState.pasteAllExclusionsByPair = byPair
+}
+
+function getPasteAllExclusionDataForCurrentPair() {
+    return getStoredPasteAllExclusionsForPairKey(getActiveSynergyCanvasPairKey())
+}
+
+function persistPasteAllExclusionDataForCurrentPair(exclusions) {
+    let pairKey = getActiveSynergyCanvasPairKey()
+    if (!pairKey) {
+        return
+    }
+    setStoredPasteAllExclusionsForPairKey(pairKey, exclusions)
+    chrome.storage.local.set({
+        [pasteAllExclusionsByPairStorageKey]: mapperState.pasteAllExclusionsByPair
+    })
+}
+
+function setCardIncludedInPasteAllUi(card, included) {
+    if (!card || card.length === 0) {
+        return
+    }
+
+    let checkbox = card.find('.bsd-card-paste-all-toggle')
+    if (checkbox.length === 0) {
+        return
+    }
+
+    let hasSynergyAssignment = Boolean(getCardSynergyAssignment(card))
+    let effectiveIncluded = hasSynergyAssignment ? Boolean(included) : true
+
+    checkbox.prop('checked', effectiveIncluded)
+    checkbox.prop('disabled', !hasSynergyAssignment)
+    card.toggleClass('bsd-card-excluded-from-paste-all', hasSynergyAssignment && !effectiveIncluded)
+}
+
+function syncPasteAllPreferenceForSynergyAssignment(synergyAssignment) {
+    let synergyKey = getManualSynergyAssignmentKey(synergyAssignment)
+    if (!synergyKey) {
+        return
+    }
+
+    let exclusions = getPasteAllExclusionDataForCurrentPair()
+    let included = !Boolean(exclusions[synergyKey])
+
+    getMapperCards().each((_, cardEl) => {
+        let card = $(cardEl)
+        if (getManualSynergyAssignmentKey(getCardSynergyAssignment(card)) === synergyKey) {
+            setCardIncludedInPasteAllUi(card, included)
+        }
+    })
+}
+
+function syncCardPasteAllPreferenceFromStorage(card) {
+    let synergyAssignment = getCardSynergyAssignment(card)
+    let synergyKey = getManualSynergyAssignmentKey(synergyAssignment)
+    if (!synergyKey) {
+        setCardIncludedInPasteAllUi(card, true)
+        return
+    }
+    syncPasteAllPreferenceForSynergyAssignment(synergyAssignment)
+}
+
+function rememberCardPasteAllPreference(card, included = null) {
+    let checkbox = card.find('.bsd-card-paste-all-toggle')
+    let synergyAssignment = getCardSynergyAssignment(card)
+    let synergyKey = getManualSynergyAssignmentKey(synergyAssignment)
+    let resolvedIncluded = included == null ? Boolean(checkbox.prop('checked')) : Boolean(included)
+
+    if (!synergyKey) {
+        setCardIncludedInPasteAllUi(card, true)
+        return
+    }
+
+    let exclusions = getPasteAllExclusionDataForCurrentPair()
+    if (resolvedIncluded) {
+        delete exclusions[synergyKey]
+    } else {
+        exclusions[synergyKey] = true
+    }
+
+    persistPasteAllExclusionDataForCurrentPair(exclusions)
+    syncPasteAllPreferenceForSynergyAssignment(synergyAssignment)
+}
+
+function isCardIncludedInPasteAll(card) {
+    let checkbox = card.find('.bsd-card-paste-all-toggle')
+    if (checkbox.length === 0) {
+        return true
+    }
+    return Boolean(checkbox.prop('checked'))
+}
+
+function getPasteAllRows() {
+    let rows = []
+
+    getMapperCards().each((_, cardEl) => {
+        let card = $(cardEl)
+        if (!isCardIncludedInPasteAll(card)) {
+            return
+        }
+
+        getRowsForCard(card).each((__, rowEl) => {
+            rows.push(rowEl)
+        })
+    })
+
+    return $(rows)
 }
 
 function syncMappingsFromCurrentPair() {
@@ -1659,6 +1800,7 @@ async function loadMapperStateFromStorage() {
         mapperSortMethodStorageKey,
         mapperMappingsByPairStorageKey,
         manualAlignmentsByPairStorageKey,
+        pasteAllExclusionsByPairStorageKey,
         mapperStorageKey
     ])
     let sync = await chrome.storage.sync.get({
@@ -1672,6 +1814,7 @@ async function loadMapperStateFromStorage() {
     mapperState.mappings = normalizeMappingsArray(local[mapperStorageKey])
     mapperState.mappingsByPair = ensurePlainObject(local[mapperMappingsByPairStorageKey])
     mapperState.manualAlignmentsByPair = ensurePlainObject(local[manualAlignmentsByPairStorageKey])
+    mapperState.pasteAllExclusionsByPair = ensurePlainObject(local[pasteAllExclusionsByPairStorageKey])
     mapperState.canvasBaseUrl = String(local.canvasBaseUrl || '')
     mapperState.selectedCanvasCourseId = String(local.canvasCourseId || '')
     mapperState.canvasIncludeConcludedCourses = false
@@ -4001,13 +4144,25 @@ function hasFetchedSubmissionsReady() {
 
 function hasPasteReadyMappings() {
     let ready = false
-    $('#bsd-map-cards .bsd-map-row').each((_, rowEl) => {
+    getPasteAllRows().each((_, rowEl) => {
         if (isRowMappingComplete($(rowEl))) {
             ready = true
             return false
         }
     })
     return ready
+}
+
+function updatePasteAllButtonState() {
+    let button = $('#bsd-paste-all')
+    if (button.length === 0) {
+        return
+    }
+
+    let hasCourse = hasSelectedCanvasCourse()
+    let hasFetched = hasCourse && hasFetchedSubmissionsReady()
+    let activityActive = !$('#bsd-paste-all-activity').hasClass('bsd-hidden')
+    button.prop('disabled', activityActive || !hasFetched || !hasPasteReadyMappings())
 }
 
 function hasSelectedCanvasCourse() {
@@ -4039,6 +4194,7 @@ function updateCourseStepUi() {
     root.toggleClass('bsd-step-2-active', hasCourse && !hasFetched)
     root.toggleClass('bsd-step-3-active', hasFetched && !hasPasteReady)
     root.toggleClass('bsd-step-4-active', hasPasteReady)
+    updatePasteAllButtonState()
 }
 
 function updateCopyCanvasAssignmentVisibility() {
@@ -4728,6 +4884,10 @@ function createMapperCard(cardData = {}) {
             <div class="bsd-assignment-wrap">
                 <div class="bsd-section-head bsd-assignment-head">
                     <div class="bsd-standards-title">Assignment</div>
+                    <label class="bsd-card-paste-all-toggle-wrap" title="Unchecked assignments are skipped by Paste All.">
+                        <input class="bsd-card-paste-all-toggle" type="checkbox" checked>
+                        <span>Include in Paste All</span>
+                    </label>
                 </div>
                 <div class="bsd-card-assignment-row">
                     <div class="bsd-card-assignment-field bsd-card-assignment-field-synergy">
@@ -4780,13 +4940,16 @@ function createMapperCard(cardData = {}) {
 
     let synAssignSelect = card.find('.bsd-card-syn-assign-select')
     let canvasAssignSelect = card.find('.bsd-card-canvas-assign-select')
+    let pasteAllToggle = card.find('.bsd-card-paste-all-toggle')
 
     buildSynergyAssignmentOptions(synAssignSelect, normalized.synergy_assignment)
     buildCanvasAssignmentOptions(canvasAssignSelect, normalized.assignment_id)
+    syncCardPasteAllPreferenceFromStorage(card)
     updateCanvasUpdatedCell(card, canvasAssignSelect.val())
 
     synAssignSelect.on('change', () => {
         clearInlineMappingErrors(card)
+        syncCardPasteAllPreferenceFromStorage(card)
         refreshCardRowSynergyAltOptions(card)
         autoMatchCanvasAssignmentForCard(card, false)
         updateCanvasUpdatedCell(card, getCardCanvasAssignment(card))
@@ -4819,6 +4982,11 @@ function createMapperCard(cardData = {}) {
         updateCardPasteStates(card)
         rememberManualAssignmentAlignment(card)
         persistMappingsFromUi()
+    })
+
+    pasteAllToggle.on('change', () => {
+        rememberCardPasteAllPreference(card, pasteAllToggle.prop('checked'))
+        updateCourseStepUi()
     })
 
     card.find('.bsd-card-remove').on('click', () => {
@@ -5480,10 +5648,13 @@ async function pasteSingleRow(row, resolvedTab = null) {
 }
 
 async function pasteAllMappings() {
-    let rows = $('#bsd-map-cards .bsd-map-row')
+    let rows = getPasteAllRows()
     if (rows.length === 0) {
-        setMapperStatus('No mapping rows to paste.', true)
-        showPasteAllToast('No mapped rows to paste.', true)
+        let message = $('#bsd-map-cards .bsd-map-row').length > 0
+            ? 'All assignments are excluded from Paste All.'
+            : 'No mapping rows to paste.'
+        setMapperStatus(message, true)
+        showPasteAllToast(message, true)
         return
     }
 
