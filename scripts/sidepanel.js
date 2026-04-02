@@ -69,9 +69,16 @@ let scoreTableState = {
     sourceSubmissionCount: 0,
     submissions: [],
     rubrics: [],
+    mappedTargets: [],
+    compareByStudentId: {},
+    previewStatus: 'idle',
+    previewSummary: null,
+    previewError: '',
+    subtitleBase: '',
     synergyOrderMap: {},
     sortKey: 'synergy_order',
-    sortDirection: 'asc'
+    sortDirection: 'asc',
+    previewRequestId: 0
 }
 
 function setMapperStatus(text, isError = false) {
@@ -212,6 +219,22 @@ async function requestSynergyMapperContext(tabId) {
     }
 
     return response
+}
+
+async function requestSynergyScoreTablePreview(tabId, colIndexes) {
+    let response = await sendMessageToTab(tabId, {
+        from: 'sidepanel.js',
+        to: 'synergy.js',
+        title: 'get_score_table_preview',
+        colIndexes: Array.isArray(colIndexes) ? colIndexes : []
+    })
+
+    if (!response || response.ok !== true) {
+        let err = response && response.error ? response.error : 'Synergy score preview is unavailable.'
+        throw new Error(err)
+    }
+
+    return response.result || {}
 }
 
 function normalizeSynergyId(rawValue) {
@@ -925,6 +948,401 @@ function getCurrentSynergyStudentOrderMap() {
     return orderMap
 }
 
+function getEmptyScoreTablePreviewSummary() {
+    return {
+        comparedRows: 0,
+        unchangedRows: 0,
+        matchedRubricCells: 0,
+        partialRubricCells: 0
+    }
+}
+
+function normalizeSynergyPreviewCompareValue(value) {
+    let normalized = String(value == null ? '' : value)
+        .replace(/\s+/g, ' ')
+        .trim()
+        .toUpperCase()
+
+    if (!normalized) {
+        return ''
+    }
+
+    return normalized
+        .split(' ')
+        .filter(Boolean)
+        .filter((token) => token !== '!' && token !== '!EX')
+        .join(' ')
+}
+
+function getScoreTableSubmissionRubricScoreRecord(submission, rubricId) {
+    if (!submission || typeof submission !== 'object') {
+        return null
+    }
+
+    let assessment = submission.rubric_assessment
+    if (assessment && typeof assessment === 'object' && Object.prototype.hasOwnProperty.call(assessment, String(rubricId))) {
+        let criterion = assessment[String(rubricId)]
+        let points = ''
+        if (criterion && Object.prototype.hasOwnProperty.call(criterion, 'points')) {
+            points = criterion.points
+        }
+        let rubricMissing = points === '' || points == null
+        return {
+            score: points,
+            excused: Boolean(submission.excused),
+            late: Boolean(submission.late),
+            missing: Boolean(submission.missing || rubricMissing)
+        }
+    }
+
+    if (submission.excused || submission.missing) {
+        return {
+            score: '',
+            excused: Boolean(submission.excused),
+            late: Boolean(submission.late),
+            missing: Boolean(submission.missing)
+        }
+    }
+
+    return null
+}
+
+function getScoreTablePreviewCgrValue(rawScore, roundUpFrom) {
+    if (rawScore === '') {
+        return ''
+    }
+    if (rawScore < 1 + roundUpFrom) {
+        return 'R'
+    }
+    if (rawScore < 2 + roundUpFrom) {
+        return 'G'
+    }
+    if (rawScore >= 2 + roundUpFrom) {
+        return 'CI'
+    }
+    return rawScore
+}
+
+function getScoreTablePreviewPasteValue(scoreRecord, roundUpFrom, missingPref, useCgrFlag) {
+    if (!scoreRecord || typeof scoreRecord !== 'object') {
+        return null
+    }
+
+    let workingScore = scoreRecord.score
+    if (useCgrFlag) {
+        workingScore = getScoreTablePreviewCgrValue(workingScore, roundUpFrom)
+    }
+
+    let roundedScore = ''
+    try {
+        if (['CI', 'G', 'R', 'N', ''].includes(workingScore)) {
+            roundedScore = workingScore
+        } else if (workingScore - Math.floor(workingScore) < roundUpFrom) {
+            roundedScore = Math.floor(workingScore)
+        } else {
+            roundedScore = Math.round(workingScore)
+        }
+    } catch (e) {
+        roundedScore = workingScore
+    }
+
+    if (scoreRecord.excused) {
+        return '! ex'
+    }
+
+    if (scoreRecord.missing || roundedScore === 0) {
+        switch (missingPref) {
+            case 'comment':
+                return 'mi !ex'
+            case 'score':
+                if (useCgrFlag) {
+                    return 'R !ex'
+                }
+                return 'N !ex'
+            case 'skip':
+            default:
+                return null
+        }
+    }
+
+    if (scoreRecord.late) {
+        return `${roundedScore} la !ex`
+    }
+
+    return `${roundedScore} ! !ex`
+}
+
+function getScoreTableMappedTargetsForCard(card, assignment) {
+    if (!card || card.length === 0 || !assignment) {
+        return []
+    }
+
+    let rubricById = {}
+    getRubrics(assignment).forEach((rubric) => {
+        let rubricId = String(rubric && rubric.id ? rubric.id : '').trim()
+        if (rubricId) {
+            rubricById[rubricId] = rubric
+        }
+    })
+
+    let targets = []
+    let seen = new Set()
+    getRowsForCard(card).each((_, rowEl) => {
+        let row = $(rowEl)
+        let mapping = getMappingFromRow(row)
+        let colIndex = String(mapping.col_index || '').trim()
+        let rubricId = String(mapping.rubric_id || '').trim()
+        if (!colIndex || !rubricId) {
+            return
+        }
+
+        let key = `${colIndex}::${rubricId}`
+        if (seen.has(key)) {
+            return
+        }
+        seen.add(key)
+
+        let selectedSynAltOption = row.find('.bsd-syn-alt-select option:selected')
+        let selectedCanvasAltOption = row.find('.bsd-canvas-alt-select option:selected')
+        let rubric = rubricById[rubricId] || null
+
+        targets.push({
+            col_index: colIndex,
+            rubric_id: rubricId,
+            synergy_alt: normalizeHeaderText(
+                selectedSynAltOption.attr('data-alt') ||
+                selectedSynAltOption.text() ||
+                mapping.synergy_alt ||
+                colIndex
+            ),
+            rubric_label: normalizeHeaderText(
+                selectedCanvasAltOption.attr('data-full-label') ||
+                (rubric && rubric.alt_code ? rubric.alt_code : '') ||
+                rubricId
+            ),
+            use_cgr: Boolean(
+                rubric &&
+                String(rubric.alt_code || '')
+                    .toUpperCase()
+                    .includes('BLT')
+            )
+        })
+    })
+
+    return targets
+}
+
+function buildScoreTableCompareState(submissions, mappedTargets, previewCellsByStudentId) {
+    let byStudentId = {}
+    let summary = getEmptyScoreTablePreviewSummary()
+    let groupedTargets = {}
+
+    ;(Array.isArray(mappedTargets) ? mappedTargets : []).forEach((target) => {
+        let rubricId = String(target && target.rubric_id ? target.rubric_id : '').trim()
+        if (!rubricId) {
+            return
+        }
+        if (!groupedTargets[rubricId]) {
+            groupedTargets[rubricId] = []
+        }
+        groupedTargets[rubricId].push(target)
+    })
+
+    ;(Array.isArray(submissions) ? submissions : []).forEach((submission) => {
+        let synergyId = normalizeSynergyId(submission && submission.synergy_id ? submission.synergy_id : '')
+        if (!synergyId) {
+            return
+        }
+
+        let rowCompared = 0
+        let rowMatched = 0
+        let rubricStates = {}
+
+        Object.keys(groupedTargets).forEach((rubricId) => {
+            let targets = groupedTargets[rubricId]
+            let firstTarget = targets[0] || {}
+            let scoreRecord = getScoreTableSubmissionRubricScoreRecord(submission, rubricId)
+            let intendedValue = getScoreTablePreviewPasteValue(
+                scoreRecord,
+                mapperState.roundUpFrom,
+                mapperState.missingPref,
+                Boolean(firstTarget.use_cgr)
+            )
+
+            if (intendedValue == null) {
+                rubricStates[rubricId] = {
+                    status: 'none',
+                    title: 'Current settings would skip this mapped value.'
+                }
+                return
+            }
+
+            let intendedNormalized = normalizeSynergyPreviewCompareValue(intendedValue)
+            let comparedCount = 0
+            let matchedCount = 0
+
+            targets.forEach((target) => {
+                let colIndex = String(target && target.col_index ? target.col_index : '').trim()
+                if (!colIndex) {
+                    return
+                }
+                let currentRaw = previewCellsByStudentId &&
+                    previewCellsByStudentId[synergyId] &&
+                    Object.prototype.hasOwnProperty.call(previewCellsByStudentId[synergyId], colIndex)
+                    ? previewCellsByStudentId[synergyId][colIndex]
+                    : null
+                if (currentRaw == null) {
+                    return
+                }
+
+                comparedCount += 1
+                if (normalizeSynergyPreviewCompareValue(currentRaw) === intendedNormalized) {
+                    matchedCount += 1
+                }
+            })
+
+            let targetNames = targets
+                .map((target) => normalizeHeaderText(target && target.synergy_alt ? target.synergy_alt : ''))
+                .filter(Boolean)
+            let targetSummary = targetNames.length > 0 ? targetNames.join(', ') : 'mapped Synergy targets'
+
+            if (comparedCount === 0) {
+                rubricStates[rubricId] = {
+                    status: 'none',
+                    title: `Current Synergy values for ${targetSummary} are not visible for comparison.`
+                }
+                return
+            }
+
+            rowCompared += comparedCount
+            rowMatched += matchedCount
+
+            if (matchedCount === comparedCount) {
+                summary.matchedRubricCells += 1
+                rubricStates[rubricId] = {
+                    status: 'match',
+                    title: `Already matches in ${targetSummary}.`
+                }
+                return
+            }
+
+            if (matchedCount > 0) {
+                summary.partialRubricCells += 1
+                rubricStates[rubricId] = {
+                    status: 'partial',
+                    title: `Some mapped targets already match in ${targetSummary}; others would change.`
+                }
+                return
+            }
+
+            rubricStates[rubricId] = {
+                status: 'change',
+                title: `Would overwrite ${targetSummary}.`
+            }
+        })
+
+        let rowUnchanged = rowCompared > 0 && rowMatched === rowCompared
+        if (rowCompared > 0) {
+            summary.comparedRows += 1
+        }
+        if (rowUnchanged) {
+            summary.unchangedRows += 1
+        }
+
+        byStudentId[synergyId] = {
+            rowCompared: rowCompared,
+            rowMatched: rowMatched,
+            rowUnchanged: rowUnchanged,
+            rubrics: rubricStates
+        }
+    })
+
+    return {
+        byStudentId: byStudentId,
+        summary: summary
+    }
+}
+
+function getScoreTableRowCompareState(submission) {
+    let synergyId = normalizeSynergyId(submission && submission.synergy_id ? submission.synergy_id : '')
+    if (!synergyId) {
+        return null
+    }
+    let byStudentId = ensurePlainObject(scoreTableState.compareByStudentId)
+    return byStudentId[synergyId] || null
+}
+
+function getScoreTableRubricCompareState(submission, rubricId) {
+    let rowState = getScoreTableRowCompareState(submission)
+    if (!rowState || !rowState.rubrics) {
+        return null
+    }
+    return rowState.rubrics[String(rubricId || '')] || null
+}
+
+function renderScoreTableModalMeta() {
+    let subtitleEl = $('#bsd-score-table-subtitle')
+    let noteEl = $('#bsd-score-table-note')
+    if (subtitleEl.length === 0 || noteEl.length === 0) {
+        return
+    }
+
+    let subtitle = String(scoreTableState.subtitleBase || '')
+    let mappedTargets = Array.isArray(scoreTableState.mappedTargets) ? scoreTableState.mappedTargets : []
+    let previewStatus = String(scoreTableState.previewStatus || 'idle')
+    let previewSummary = scoreTableState.previewSummary || getEmptyScoreTablePreviewSummary()
+
+    if (mappedTargets.length === 0) {
+        subtitleEl.text(subtitle)
+        noteEl.html(
+            'Map at least one ALT row on this tile to preview which current Synergy values already match. ' +
+            '<b>Points*</b> show the Canvas entered score and are not pasted by the extension.'
+        )
+        return
+    }
+
+    if (previewStatus === 'loading') {
+        subtitleEl.text(`${subtitle} • checking current Synergy values`)
+        noteEl.html(
+            'Checking current Synergy values for this tile&apos;s mapped targets. ' +
+            '<b>Points*</b> show the Canvas entered score and are not pasted by the extension.'
+        )
+        return
+    }
+
+    if (previewStatus === 'ready') {
+        let hasComparedRows = previewSummary.comparedRows > 0
+        let comparedText = hasComparedRows
+            ? ` • ${previewSummary.unchangedRows} unchanged row${previewSummary.unchangedRows === 1 ? '' : 's'}`
+            : ' • no visible mapped targets to compare'
+        subtitleEl.text(`${subtitle}${comparedText}`)
+        if (hasComparedRows) {
+            noteEl.html(
+                'Faded rows/cells already match current Synergy values for this tile&apos;s mapped targets. ' +
+                '<b>Points*</b> show the Canvas entered score and are not pasted by the extension.'
+            )
+            return
+        }
+        noteEl.html(
+            'Mapped targets are present, but no visible current Synergy values could be compared in this view. ' +
+            '<b>Points*</b> show the Canvas entered score and are not pasted by the extension.'
+        )
+        return
+    }
+
+    if (previewStatus === 'unavailable') {
+        subtitleEl.text(`${subtitle} • live compare unavailable`)
+        noteEl.html(
+            `${escapeHtmlText(String(scoreTableState.previewError || 'Could not read current Synergy values.'))} ` +
+            '<b>Points*</b> show the Canvas entered score and are not pasted by the extension.'
+        )
+        return
+    }
+
+    subtitleEl.text(subtitle)
+    noteEl.html('<b>Points*</b> show the Canvas entered score and are not pasted by the extension.')
+}
+
 function getScoreTableCurrentSectionSubmissions(submissions) {
     let list = Array.isArray(submissions) ? submissions : []
     let visibleIdSet = getSynergyStudentIdSet(mapperState.synergyStudentIds)
@@ -1227,6 +1645,7 @@ function renderScoreTableModalTable() {
         scoreTableState.sortDirection,
         scoreTableState.synergyOrderMap
     ))
+    renderScoreTableModalMeta()
 
     let headerHtml = '<tr>'
     headerHtml += buildScoreTableHeaderCellHtml('Row', 'synergy_order', 'Match current Synergy row order')
@@ -1258,7 +1677,9 @@ function renderScoreTableModalTable() {
             nameCell = `<a href="${escapeHtmlText(speedGraderUrl)}" target="_blank" rel="noopener noreferrer">${nameCell}</a>`
         }
 
-        rowsHtml += `<tr data-filter="${escapeHtmlText(buildScoreTableFilterText(submission, rubrics))}">`
+        let rowCompareState = getScoreTableRowCompareState(submission)
+        let rowClass = rowCompareState && rowCompareState.rowUnchanged ? ' class="bsd-score-table-row-unchanged"' : ''
+        rowsHtml += `<tr${rowClass} data-filter="${escapeHtmlText(buildScoreTableFilterText(submission, rubrics))}">`
         rowsHtml += `<td class="bsd-score-table-row-order">${escapeHtmlText(getScoreTableSynergyOrderDisplay(submission, scoreTableState.synergyOrderMap))}</td>`
         rowsHtml += `<td>${escapeHtmlText(String(submission && submission.period ? submission.period : ''))}</td>`
         rowsHtml += `<td>${escapeHtmlText(String(submission && submission.synergy_id ? submission.synergy_id : ''))}</td>`
@@ -1266,8 +1687,25 @@ function renderScoreTableModalTable() {
 
         rubrics.forEach((rubric) => {
             let scoreText = getRubricScoreCellText(submission, rubric && rubric.id ? rubric.id : '')
-            let cellClass = scoreText === '???' ? 'bsd-score-table-unknown' : scoreText ? '' : 'bsd-score-table-empty'
-            rowsHtml += `<td class="${cellClass}">${escapeHtmlText(scoreText)}</td>`
+            let cellClasses = []
+            if (scoreText === '???') {
+                cellClasses.push('bsd-score-table-unknown')
+            } else if (!scoreText) {
+                cellClasses.push('bsd-score-table-empty')
+            }
+
+            let compareState = getScoreTableRubricCompareState(submission, rubric && rubric.id ? rubric.id : '')
+            let cellTitle = ''
+            if (compareState && compareState.title) {
+                cellTitle = ` title="${escapeHtmlText(compareState.title)}"`
+            }
+            if (compareState && compareState.status === 'match') {
+                cellClasses.push('bsd-score-table-preview-match')
+            } else if (compareState && compareState.status === 'partial') {
+                cellClasses.push('bsd-score-table-preview-partial')
+            }
+
+            rowsHtml += `<td class="${cellClasses.join(' ')}"${cellTitle}>${escapeHtmlText(scoreText)}</td>`
         })
 
         rowsHtml += `<td class="bsd-score-table-flag">${getScoreTableFlagCell(Boolean(submission && submission.missing))}</td>`
@@ -1291,13 +1729,20 @@ function closeScoreTableModal() {
     scoreTableState.sourceSubmissionCount = 0
     scoreTableState.submissions = []
     scoreTableState.rubrics = []
+    scoreTableState.mappedTargets = []
+    scoreTableState.compareByStudentId = {}
+    scoreTableState.previewStatus = 'idle'
+    scoreTableState.previewSummary = null
+    scoreTableState.previewError = ''
+    scoreTableState.subtitleBase = ''
     scoreTableState.synergyOrderMap = {}
     scoreTableState.sortKey = 'synergy_order'
     scoreTableState.sortDirection = 'asc'
+    scoreTableState.previewRequestId += 1
     modal.addClass('bsd-hidden').attr('aria-hidden', 'true')
 }
 
-function openScoreTableModalForAssignment(assignmentId) {
+async function openScoreTableModalForAssignment(assignmentId, card = null) {
     let safeAssignmentId = String(assignmentId || '')
     if (!safeAssignmentId) {
         setMapperStatus('Choose a Canvas assignment before opening the score table.', true)
@@ -1315,6 +1760,7 @@ function openScoreTableModalForAssignment(assignmentId) {
     let sourceSubmissions = getScoreTableRawSubmissionsForAssignment(safeAssignmentId)
     let submissions = getScoreTableCurrentSectionSubmissions(sourceSubmissions)
     let rubrics = getRubrics(assignment)
+    let mappedTargets = getScoreTableMappedTargetsForCard(card, assignment)
     let titleEl = $('#bsd-score-table-title')
     let subtitleEl = $('#bsd-score-table-subtitle')
     let searchEl = $('#bsd-score-table-search')
@@ -1340,23 +1786,73 @@ function openScoreTableModalForAssignment(assignmentId) {
     if (hasSectionContext && sourceSubmissions.length !== submissions.length) {
         sectionSummary += ` (${sourceSubmissions.length} fetched)`
     }
-    subtitleEl.text(
+    let subtitleBase =
         `${sectionSummary} • ` +
         `${rubrics.length} target${rubrics.length === 1 ? '' : 's'} • ` +
         `${missingCount} missing • ${lateCount} late • ${excusedCount} excused`
-    )
 
     scoreTableState.assignmentId = safeAssignmentId
     scoreTableState.sourceSubmissionCount = sourceSubmissions.length
     scoreTableState.submissions = submissions
     scoreTableState.rubrics = rubrics
+    scoreTableState.mappedTargets = mappedTargets
+    scoreTableState.compareByStudentId = {}
+    scoreTableState.previewStatus = mappedTargets.length > 0 ? 'loading' : 'idle'
+    scoreTableState.previewSummary = getEmptyScoreTablePreviewSummary()
+    scoreTableState.previewError = ''
+    scoreTableState.subtitleBase = subtitleBase
     scoreTableState.synergyOrderMap = getCurrentSynergyStudentOrderMap()
     scoreTableState.sortKey = 'synergy_order'
     scoreTableState.sortDirection = 'asc'
+    scoreTableState.previewRequestId += 1
+    let previewRequestId = scoreTableState.previewRequestId
 
     searchEl.val('')
     modal.removeClass('bsd-hidden').attr('aria-hidden', 'false')
     renderScoreTableModalTable()
+
+    if (mappedTargets.length > 0) {
+        try {
+            let tab = await resolveSynergyTab()
+            if (!tab) {
+                throw new Error('Open the Synergy gradebook to preview overwrite differences.')
+            }
+
+            let preview = await requestSynergyScoreTablePreview(
+                tab.id,
+                mappedTargets.map((target) => String(target.col_index || ''))
+            )
+
+            if (
+                scoreTableState.previewRequestId !== previewRequestId ||
+                scoreTableState.assignmentId !== safeAssignmentId
+            ) {
+                return
+            }
+
+            let previewCellsByStudentId = ensurePlainObject(preview && preview.cellsByStudentId)
+            let compareState = buildScoreTableCompareState(submissions, mappedTargets, previewCellsByStudentId)
+            scoreTableState.compareByStudentId = compareState.byStudentId
+            scoreTableState.previewSummary = compareState.summary
+            scoreTableState.previewStatus = 'ready'
+            scoreTableState.previewError = ''
+        } catch (e) {
+            if (
+                scoreTableState.previewRequestId !== previewRequestId ||
+                scoreTableState.assignmentId !== safeAssignmentId
+            ) {
+                return
+            }
+
+            scoreTableState.compareByStudentId = {}
+            scoreTableState.previewSummary = getEmptyScoreTablePreviewSummary()
+            scoreTableState.previewStatus = 'unavailable'
+            scoreTableState.previewError = e && e.message ? e.message : String(e)
+        }
+
+        renderScoreTableModalTable()
+    }
+
     window.setTimeout(() => {
         let input = searchEl.get(0)
         if (input && typeof input.focus === 'function') {
@@ -5015,8 +5511,8 @@ function createMapperCard(cardData = {}) {
         }
     })
 
-    card.find('.bsd-card-show-score-table').on('click', () => {
-        openScoreTableModalForAssignment(getCardCanvasAssignment(card))
+    card.find('.bsd-card-show-score-table').on('click', async () => {
+        await openScoreTableModalForAssignment(getCardCanvasAssignment(card), card)
     })
 
     let rowSeeds = normalized.rows
@@ -5637,6 +6133,10 @@ async function pasteSingleRow(row, resolvedTab = null) {
         status.css('color', '#b4f7fe').text('Pasting...')
         let result = await requestSynergyPaste(tab.id, mapping)
         let statusText = `Done: ${result.pushed}/${result.matched} pushed`
+        let skippedIdentical = Number(result && result.skipped_identical ? result.skipped_identical : 0)
+        if (skippedIdentical > 0) {
+            statusText += `, ${skippedIdentical} unchanged`
+        }
         let skippedTarget = Number(result && result.skipped_target ? result.skipped_target : 0)
         if (skippedTarget > 0) {
             statusText += `, ${skippedTarget} skipped in section`

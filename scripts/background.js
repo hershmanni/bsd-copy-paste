@@ -409,6 +409,351 @@ async function bg_clear_all() {
 }
 
 function bg_syn_update(score, synergy_id, row_index, col_index) {
+    function normalizeScoreEntryValue(value) {
+        let normalized = String(value == null ? '' : value)
+            .replace(/\s+/g, ' ')
+            .trim()
+            .toUpperCase()
+
+        if (!normalized) {
+            return ''
+        }
+
+        return normalized
+            .split(' ')
+            .filter(Boolean)
+            .filter((token) => token !== '!' && token !== '!EX')
+            .join(' ')
+    }
+
+    function normalizeDisplayText(value) {
+        return String(value == null ? '' : value)
+            .replace(/\u00a0/g, ' ')
+            .replace(/\s+/g, ' ')
+            .trim()
+    }
+
+    function getHeaderTemplateType(headerCell) {
+        if (!headerCell) {
+            return ''
+        }
+
+        let templateNode = headerCell.querySelector('[data-options*="dxTemplate"]')
+        let options = String(templateNode ? templateNode.getAttribute('data-options') || '' : '')
+        if (options.includes('standardsAssignmentHeaderTemplate')) {
+            return 'standards_assignment'
+        }
+        if (options.includes('standardsHeaderTemplate')) {
+            return 'standards'
+        }
+        if (options.includes('assignmentHeaderNoScoreEntryTemplate')) {
+            return 'comment'
+        }
+        if (options.includes('assignmentHeaderTemplate')) {
+            return 'assignment'
+        }
+        return ''
+    }
+
+    function getHeaderCellText(headerCell) {
+        if (!headerCell) {
+            return ''
+        }
+
+        let assignmentTitle = normalizeDisplayText(
+            (headerCell.querySelector('.assignment-title span') || {}).textContent || ''
+        )
+        if (assignmentTitle) {
+            return assignmentTitle
+        }
+
+        let bandLabel = normalizeDisplayText(
+            (headerCell.querySelector('.header-cell.band-cell') || {}).textContent || ''
+        )
+        if (bandLabel) {
+            return bandLabel
+        }
+
+        let clean = normalizeDisplayText(headerCell.textContent || '')
+        if (clean) {
+            return clean
+        }
+
+        let ariaLabel = normalizeDisplayText(headerCell.getAttribute('aria-label') || '')
+        if (ariaLabel.toLowerCase().startsWith('column ')) {
+            ariaLabel = ariaLabel.slice(7).trim()
+        }
+        return ariaLabel
+    }
+
+    function getHeaderBandRanges(headerRows) {
+        let ranges = []
+        if (!Array.isArray(headerRows) || headerRows.length < 2) {
+            return ranges
+        }
+
+        let cursor = 0
+        Array.from(headerRows[0].querySelectorAll('td[role="columnheader"]')).forEach((cell) => {
+            let rowSpan = Number(cell.getAttribute('rowspan') || 1)
+            let colSpan = Number(cell.getAttribute('colspan') || 1)
+            if (rowSpan >= 2) {
+                return
+            }
+
+            ranges.push({
+                start: cursor,
+                end: cursor + colSpan - 1,
+                label: getHeaderCellText(cell)
+            })
+            cursor += colSpan
+        })
+
+        return ranges
+    }
+
+    function getBandLabelForLeafIndex(leafIndex, bandRanges) {
+        for (let i = 0; i < bandRanges.length; i++) {
+            let band = bandRanges[i]
+            if (leafIndex >= band.start && leafIndex <= band.end) {
+                return band.label
+            }
+        }
+        return ''
+    }
+
+    function buildHeaderMetaById(rootDoc) {
+        let metaById = {}
+        let headerRows = Array.from(rootDoc.querySelectorAll('.dx-datagrid-headers table tr'))
+        if (headerRows.length === 0) {
+            return metaById
+        }
+
+        Array.from(rootDoc.querySelectorAll('.dx-datagrid-headers table td[role="columnheader"][id]')).forEach((cell) => {
+            let id = String(cell.getAttribute('id') || '')
+            if (!id) {
+                return
+            }
+
+            metaById[id] = {
+                leafLabel: getHeaderCellText(cell),
+                bandLabel: '',
+                templateType: getHeaderTemplateType(cell)
+            }
+        })
+
+        if (headerRows.length < 2) {
+            return metaById
+        }
+
+        let bandRanges = getHeaderBandRanges(headerRows)
+        let leafHeaders = Array.from(
+            headerRows[headerRows.length - 1].querySelectorAll('td[role="columnheader"][id]')
+        )
+
+        leafHeaders.forEach((cell, leafIndex) => {
+            let id = String(cell.getAttribute('id') || '')
+            if (!id) {
+                return
+            }
+            if (!metaById[id]) {
+                metaById[id] = {
+                    leafLabel: getHeaderCellText(cell),
+                    bandLabel: '',
+                    templateType: getHeaderTemplateType(cell)
+                }
+            }
+            metaById[id].bandLabel = getBandLabelForLeafIndex(leafIndex, bandRanges)
+            metaById[id].templateType = getHeaderTemplateType(cell)
+        })
+
+        return metaById
+    }
+
+    function buildCommentColumnMap(scoreTableEl, rootDoc) {
+        let map = {}
+        let firstDataRow = Array.from(scoreTableEl.querySelectorAll('tr[aria-rowindex]')).find((rowEl) => {
+            return rowEl.querySelector('td[aria-colindex]') !== null
+        })
+        if (!firstDataRow) {
+            return map
+        }
+
+        let headerMetaById = buildHeaderMetaById(rootDoc)
+        let visibleCols = Array.from(firstDataRow.querySelectorAll('td[aria-colindex]')).map((cell) => {
+            let colIndex = String(cell.getAttribute('aria-colindex') || '').trim()
+            let headerId = String(cell.getAttribute('aria-describedby') || '').trim()
+            let meta = headerMetaById[headerId] || {}
+            let leafLabel = normalizeDisplayText(meta.leafLabel || '')
+            let bandLabel = normalizeDisplayText(meta.bandLabel || '')
+            let templateType = String(meta.templateType || '')
+            let isComment = (
+                templateType === 'comment' ||
+                leafLabel.toLowerCase() === 'cmt' ||
+                Boolean(cell.querySelector('.cell-flag.cmt-code'))
+            )
+
+            return {
+                colIndex: colIndex,
+                order: Number(colIndex),
+                bandLabel: bandLabel,
+                isComment: isComment
+            }
+        }).filter((column) => column.colIndex)
+
+        let columnsByBand = {}
+        visibleCols.forEach((column) => {
+            let key = column.bandLabel || ''
+            if (!key) {
+                return
+            }
+            if (!columnsByBand[key]) {
+                columnsByBand[key] = []
+            }
+            columnsByBand[key].push(column)
+        })
+
+        Object.keys(columnsByBand).forEach((key) => {
+            let group = columnsByBand[key]
+            let commentCols = group.filter((column) => column.isComment)
+            if (commentCols.length === 0) {
+                return
+            }
+
+            group.forEach((column) => {
+                if (column.isComment || map[column.colIndex]) {
+                    return
+                }
+
+                let match = commentCols
+                    .filter((commentCol) => commentCol.order > column.order)
+                    .sort((a, b) => a.order - b.order)[0]
+
+                if (!match) {
+                    match = commentCols
+                        .slice()
+                        .sort((a, b) => Math.abs(a.order - column.order) - Math.abs(b.order - column.order))[0]
+                }
+
+                if (match) {
+                    map[column.colIndex] = match.colIndex
+                }
+            })
+        })
+
+        let sortedCols = visibleCols.slice().sort((a, b) => a.order - b.order)
+        sortedCols.forEach((column, index) => {
+            if (!column.isComment) {
+                return
+            }
+
+            for (let leftIndex = index - 1; leftIndex >= 0; leftIndex--) {
+                let leftColumn = sortedCols[leftIndex]
+                if (leftColumn.isComment) {
+                    break
+                }
+                if (!map[leftColumn.colIndex]) {
+                    map[leftColumn.colIndex] = column.colIndex
+                }
+            }
+        })
+
+        return map
+    }
+
+    function getEditableScoreInput(cellWrap, targetColIndex) {
+        let input = cellWrap.querySelector('input')
+        if (input) {
+            return input
+        }
+
+        cellWrap.click()
+        input = cellWrap.querySelector('input')
+        if (!input) {
+            throw new Error(`Column ${targetColIndex} did not expose an input after click.`)
+        }
+
+        return input
+    }
+
+    function getCellScoreDisplayValue(targetCell) {
+        if (!targetCell) {
+            return ''
+        }
+
+        let scoreNode = targetCell.querySelector('.asgn-cell .score')
+        if (scoreNode) {
+            return normalizeDisplayText(scoreNode.textContent || '')
+        }
+
+        let cellNode = targetCell.querySelector('.asgn-cell')
+        if (cellNode) {
+            return normalizeDisplayText(cellNode.textContent || '')
+        }
+
+        return ''
+    }
+
+    function getCellCommentDisplayValue(targetCell) {
+        if (!targetCell) {
+            return ''
+        }
+
+        let commentNode = targetCell.querySelector('.cell-flag.cmt-code')
+        return normalizeDisplayText(commentNode ? commentNode.textContent || '' : '')
+    }
+
+    function getCurrentCompositeValue(targetCell, targetRow, targetColIndex, commentColByScoreCol) {
+        let scoreValue = getCellScoreDisplayValue(targetCell)
+        let cellWrap = targetCell ? targetCell.querySelector('div.asgn-cell-wrap') : null
+        if (cellWrap) {
+            let input = getEditableScoreInput(cellWrap, targetColIndex)
+            if (input) {
+                scoreValue = normalizeDisplayText(input.value || '')
+                input.blur()
+            }
+        }
+
+        let commentValue = ''
+        let commentColIndex = String(commentColByScoreCol[String(targetColIndex).trim()] || '').trim()
+        if (commentColIndex && targetRow) {
+            let commentCell = targetRow.querySelector(`td[aria-colindex="${commentColIndex}"]`)
+            commentValue = getCellCommentDisplayValue(commentCell)
+        } else {
+            commentValue = getCellCommentDisplayValue(targetCell)
+        }
+
+        return normalizeDisplayText([scoreValue, commentValue].filter(Boolean).join(' '))
+    }
+
+    function applyScoreValue(targetCell, targetRow, nextScore, targetColIndex, commentColByScoreCol) {
+        let cellWrap = targetCell.querySelector('div.asgn-cell-wrap')
+        if (!cellWrap) {
+            throw new Error(`Column ${targetColIndex} is not a score-entry cell.`)
+        }
+
+        let input = getEditableScoreInput(cellWrap, targetColIndex)
+        let nextValue = nextScore == null ? '' : String(nextScore)
+        let currentValue = getCurrentCompositeValue(targetCell, targetRow, targetColIndex, commentColByScoreCol)
+
+        if (normalizeScoreEntryValue(currentValue) === normalizeScoreEntryValue(nextValue)) {
+            input.blur()
+            return {
+                updated: false,
+                skipped_identical: true
+            }
+        }
+
+        input.value = nextValue
+        input.dispatchEvent(new Event('input', { bubbles: true }))
+        input.dispatchEvent(new Event('change', { bubbles: true }))
+        input.blur()
+
+        return {
+            updated: true,
+            skipped_identical: false
+        }
+    }
+
     let docs = [document]
     try {
         if (window.frames && window.frames.length > 0) {
@@ -441,6 +786,7 @@ function bg_syn_update(score, synergy_id, row_index, col_index) {
         throw new Error('Synergy score table not found in current document/frame.')
     }
 
+    let commentColByScoreCol = buildCommentColumnMap(scoreTable, hostDoc)
     let targetRow = scoreTable.querySelector(`tr[aria-rowindex="${row_index}"]`)
     if (!targetRow) {
         throw new Error(`Could not find Synergy row ${row_index}.`)
@@ -471,36 +817,370 @@ function bg_syn_update(score, synergy_id, row_index, col_index) {
         throw new Error(`Target column ${col_index} was not found in row ${row_index}.`)
     }
 
-    let cellWrap = targetCell.querySelector('div.asgn-cell-wrap')
-    if (!cellWrap) {
-        throw new Error(`Column ${col_index} is not a score-entry cell.`)
-    }
-
-    cellWrap.click()
-    let input = cellWrap.querySelector('input')
-    if (!input) {
-        throw new Error(`Column ${col_index} did not expose an input after click.`)
-    }
-
-    input.value = score == null ? '' : String(score)
-    input.dispatchEvent(new Event('input', { bubbles: true }))
-    input.dispatchEvent(new Event('change', { bubbles: true }))
-    input.blur()
+    let writeResult = applyScoreValue(targetCell, targetRow, score, col_index, commentColByScoreCol)
 
     return {
         ok: true,
         row: String(row_index),
         col: String(col_index),
-        synergy_id: String(synergy_id)
+        synergy_id: String(synergy_id),
+        updated: Boolean(writeResult.updated),
+        skipped_identical: Boolean(writeResult.skipped_identical)
     }
 }
 
 function bg_syn_update_batch(updates) {
+    function normalizeScoreEntryValue(value) {
+        let normalized = String(value == null ? '' : value)
+            .replace(/\s+/g, ' ')
+            .trim()
+            .toUpperCase()
+
+        if (!normalized) {
+            return ''
+        }
+
+        return normalized
+            .split(' ')
+            .filter(Boolean)
+            .filter((token) => token !== '!' && token !== '!EX')
+            .join(' ')
+    }
+
+    function normalizeDisplayText(value) {
+        return String(value == null ? '' : value)
+            .replace(/\u00a0/g, ' ')
+            .replace(/\s+/g, ' ')
+            .trim()
+    }
+
+    function getHeaderTemplateType(headerCell) {
+        if (!headerCell) {
+            return ''
+        }
+
+        let templateNode = headerCell.querySelector('[data-options*="dxTemplate"]')
+        let options = String(templateNode ? templateNode.getAttribute('data-options') || '' : '')
+        if (options.includes('standardsAssignmentHeaderTemplate')) {
+            return 'standards_assignment'
+        }
+        if (options.includes('standardsHeaderTemplate')) {
+            return 'standards'
+        }
+        if (options.includes('assignmentHeaderNoScoreEntryTemplate')) {
+            return 'comment'
+        }
+        if (options.includes('assignmentHeaderTemplate')) {
+            return 'assignment'
+        }
+        return ''
+    }
+
+    function getHeaderCellText(headerCell) {
+        if (!headerCell) {
+            return ''
+        }
+
+        let assignmentTitle = normalizeDisplayText(
+            (headerCell.querySelector('.assignment-title span') || {}).textContent || ''
+        )
+        if (assignmentTitle) {
+            return assignmentTitle
+        }
+
+        let bandLabel = normalizeDisplayText(
+            (headerCell.querySelector('.header-cell.band-cell') || {}).textContent || ''
+        )
+        if (bandLabel) {
+            return bandLabel
+        }
+
+        let clean = normalizeDisplayText(headerCell.textContent || '')
+        if (clean) {
+            return clean
+        }
+
+        let ariaLabel = normalizeDisplayText(headerCell.getAttribute('aria-label') || '')
+        if (ariaLabel.toLowerCase().startsWith('column ')) {
+            ariaLabel = ariaLabel.slice(7).trim()
+        }
+        return ariaLabel
+    }
+
+    function getHeaderBandRanges(headerRows) {
+        let ranges = []
+        if (!Array.isArray(headerRows) || headerRows.length < 2) {
+            return ranges
+        }
+
+        let cursor = 0
+        Array.from(headerRows[0].querySelectorAll('td[role="columnheader"]')).forEach((cell) => {
+            let rowSpan = Number(cell.getAttribute('rowspan') || 1)
+            let colSpan = Number(cell.getAttribute('colspan') || 1)
+            if (rowSpan >= 2) {
+                return
+            }
+
+            ranges.push({
+                start: cursor,
+                end: cursor + colSpan - 1,
+                label: getHeaderCellText(cell)
+            })
+            cursor += colSpan
+        })
+
+        return ranges
+    }
+
+    function getBandLabelForLeafIndex(leafIndex, bandRanges) {
+        for (let i = 0; i < bandRanges.length; i++) {
+            let band = bandRanges[i]
+            if (leafIndex >= band.start && leafIndex <= band.end) {
+                return band.label
+            }
+        }
+        return ''
+    }
+
+    function buildHeaderMetaById(rootDoc) {
+        let metaById = {}
+        let headerRows = Array.from(rootDoc.querySelectorAll('.dx-datagrid-headers table tr'))
+        if (headerRows.length === 0) {
+            return metaById
+        }
+
+        Array.from(rootDoc.querySelectorAll('.dx-datagrid-headers table td[role="columnheader"][id]')).forEach((cell) => {
+            let id = String(cell.getAttribute('id') || '')
+            if (!id) {
+                return
+            }
+
+            metaById[id] = {
+                leafLabel: getHeaderCellText(cell),
+                bandLabel: '',
+                templateType: getHeaderTemplateType(cell)
+            }
+        })
+
+        if (headerRows.length < 2) {
+            return metaById
+        }
+
+        let bandRanges = getHeaderBandRanges(headerRows)
+        let leafHeaders = Array.from(
+            headerRows[headerRows.length - 1].querySelectorAll('td[role="columnheader"][id]')
+        )
+
+        leafHeaders.forEach((cell, leafIndex) => {
+            let id = String(cell.getAttribute('id') || '')
+            if (!id) {
+                return
+            }
+            if (!metaById[id]) {
+                metaById[id] = {
+                    leafLabel: getHeaderCellText(cell),
+                    bandLabel: '',
+                    templateType: getHeaderTemplateType(cell)
+                }
+            }
+            metaById[id].bandLabel = getBandLabelForLeafIndex(leafIndex, bandRanges)
+            metaById[id].templateType = getHeaderTemplateType(cell)
+        })
+
+        return metaById
+    }
+
+    function buildCommentColumnMap(scoreTableEl, rootDoc) {
+        let map = {}
+        let firstDataRow = Array.from(scoreTableEl.querySelectorAll('tr[aria-rowindex]')).find((rowEl) => {
+            return rowEl.querySelector('td[aria-colindex]') !== null
+        })
+        if (!firstDataRow) {
+            return map
+        }
+
+        let headerMetaById = buildHeaderMetaById(rootDoc)
+        let visibleCols = Array.from(firstDataRow.querySelectorAll('td[aria-colindex]')).map((cell) => {
+            let colIndex = String(cell.getAttribute('aria-colindex') || '').trim()
+            let headerId = String(cell.getAttribute('aria-describedby') || '').trim()
+            let meta = headerMetaById[headerId] || {}
+            let leafLabel = normalizeDisplayText(meta.leafLabel || '')
+            let bandLabel = normalizeDisplayText(meta.bandLabel || '')
+            let templateType = String(meta.templateType || '')
+            let isComment = (
+                templateType === 'comment' ||
+                leafLabel.toLowerCase() === 'cmt' ||
+                Boolean(cell.querySelector('.cell-flag.cmt-code'))
+            )
+
+            return {
+                colIndex: colIndex,
+                order: Number(colIndex),
+                bandLabel: bandLabel,
+                isComment: isComment
+            }
+        }).filter((column) => column.colIndex)
+
+        let columnsByBand = {}
+        visibleCols.forEach((column) => {
+            let key = column.bandLabel || ''
+            if (!key) {
+                return
+            }
+            if (!columnsByBand[key]) {
+                columnsByBand[key] = []
+            }
+            columnsByBand[key].push(column)
+        })
+
+        Object.keys(columnsByBand).forEach((key) => {
+            let group = columnsByBand[key]
+            let commentCols = group.filter((column) => column.isComment)
+            if (commentCols.length === 0) {
+                return
+            }
+
+            group.forEach((column) => {
+                if (column.isComment || map[column.colIndex]) {
+                    return
+                }
+
+                let match = commentCols
+                    .filter((commentCol) => commentCol.order > column.order)
+                    .sort((a, b) => a.order - b.order)[0]
+
+                if (!match) {
+                    match = commentCols
+                        .slice()
+                        .sort((a, b) => Math.abs(a.order - column.order) - Math.abs(b.order - column.order))[0]
+                }
+
+                if (match) {
+                    map[column.colIndex] = match.colIndex
+                }
+            })
+        })
+
+        let sortedCols = visibleCols.slice().sort((a, b) => a.order - b.order)
+        sortedCols.forEach((column, index) => {
+            if (!column.isComment) {
+                return
+            }
+
+            for (let leftIndex = index - 1; leftIndex >= 0; leftIndex--) {
+                let leftColumn = sortedCols[leftIndex]
+                if (leftColumn.isComment) {
+                    break
+                }
+                if (!map[leftColumn.colIndex]) {
+                    map[leftColumn.colIndex] = column.colIndex
+                }
+            }
+        })
+
+        return map
+    }
+
+    function getEditableScoreInput(cellWrap, targetColIndex) {
+        let input = cellWrap.querySelector('input')
+        if (input) {
+            return input
+        }
+
+        cellWrap.click()
+        input = cellWrap.querySelector('input')
+        if (!input) {
+            throw new Error(`Column ${targetColIndex} did not expose an input after click.`)
+        }
+
+        return input
+    }
+
+    function getCellScoreDisplayValue(targetCell) {
+        if (!targetCell) {
+            return ''
+        }
+
+        let scoreNode = targetCell.querySelector('.asgn-cell .score')
+        if (scoreNode) {
+            return normalizeDisplayText(scoreNode.textContent || '')
+        }
+
+        let cellNode = targetCell.querySelector('.asgn-cell')
+        if (cellNode) {
+            return normalizeDisplayText(cellNode.textContent || '')
+        }
+
+        return ''
+    }
+
+    function getCellCommentDisplayValue(targetCell) {
+        if (!targetCell) {
+            return ''
+        }
+
+        let commentNode = targetCell.querySelector('.cell-flag.cmt-code')
+        return normalizeDisplayText(commentNode ? commentNode.textContent || '' : '')
+    }
+
+    function getCurrentCompositeValue(targetCell, targetRow, targetColIndex, commentColByScoreCol) {
+        let scoreValue = getCellScoreDisplayValue(targetCell)
+        let cellWrap = targetCell ? targetCell.querySelector('div.asgn-cell-wrap') : null
+        if (cellWrap) {
+            let input = getEditableScoreInput(cellWrap, targetColIndex)
+            if (input) {
+                scoreValue = normalizeDisplayText(input.value || '')
+                input.blur()
+            }
+        }
+
+        let commentValue = ''
+        let commentColIndex = String(commentColByScoreCol[String(targetColIndex).trim()] || '').trim()
+        if (commentColIndex && targetRow) {
+            let commentCell = targetRow.querySelector(`td[aria-colindex="${commentColIndex}"]`)
+            commentValue = getCellCommentDisplayValue(commentCell)
+        } else {
+            commentValue = getCellCommentDisplayValue(targetCell)
+        }
+
+        return normalizeDisplayText([scoreValue, commentValue].filter(Boolean).join(' '))
+    }
+
+    function applyScoreValue(targetCell, targetRow, nextScore, targetColIndex, commentColByScoreCol) {
+        let cellWrap = targetCell.querySelector('div.asgn-cell-wrap')
+        if (!cellWrap) {
+            throw new Error(`Column ${targetColIndex} is not a score-entry cell.`)
+        }
+
+        let input = getEditableScoreInput(cellWrap, targetColIndex)
+        let nextValue = nextScore == null ? '' : String(nextScore)
+        let currentValue = getCurrentCompositeValue(targetCell, targetRow, targetColIndex, commentColByScoreCol)
+
+        if (normalizeScoreEntryValue(currentValue) === normalizeScoreEntryValue(nextValue)) {
+            input.blur()
+            return {
+                updated: false,
+                skipped_identical: true
+            }
+        }
+
+        input.value = nextValue
+        input.dispatchEvent(new Event('input', { bubbles: true }))
+        input.dispatchEvent(new Event('change', { bubbles: true }))
+        input.blur()
+
+        return {
+            updated: true,
+            skipped_identical: false
+        }
+    }
+
     let safeUpdates = Array.isArray(updates) ? updates : []
     if (safeUpdates.length === 0) {
         return {
             ok: true,
             updated_count: 0,
+            skipped_identical_count: 0,
             failed_count: 0,
             results: []
         }
@@ -538,6 +1218,7 @@ function bg_syn_update_batch(updates) {
         throw new Error('Synergy score table not found in current document/frame.')
     }
 
+    let commentColByScoreCol = buildCommentColumnMap(scoreTable, hostDoc)
     let rowByIndex = {}
     let rowBySynergyId = {}
     scoreTable.querySelectorAll('tr[aria-rowindex]').forEach((rowEl) => {
@@ -553,6 +1234,8 @@ function bg_syn_update_batch(updates) {
     })
 
     let updatedCount = 0
+    let skippedIdenticalCount = 0
+    let failedCount = 0
     let results = []
 
     safeUpdates.forEach((rawUpdate) => {
@@ -587,30 +1270,22 @@ function bg_syn_update_batch(updates) {
                 throw new Error(`Target column ${colIndex} was not found in row ${rowIndex}.`)
             }
 
-            let cellWrap = targetCell.querySelector('div.asgn-cell-wrap')
-            if (!cellWrap) {
-                throw new Error(`Column ${colIndex} is not a score-entry cell.`)
+            let writeResult = applyScoreValue(targetCell, targetRow, score, colIndex, commentColByScoreCol)
+            if (writeResult.updated) {
+                updatedCount++
+            } else if (writeResult.skipped_identical) {
+                skippedIdenticalCount++
             }
-
-            cellWrap.click()
-            let input = cellWrap.querySelector('input')
-            if (!input) {
-                throw new Error(`Column ${colIndex} did not expose an input after click.`)
-            }
-
-            input.value = score
-            input.dispatchEvent(new Event('input', { bubbles: true }))
-            input.dispatchEvent(new Event('change', { bubbles: true }))
-            input.blur()
-
-            updatedCount++
             results.push({
                 ok: true,
                 synergy_id: synergyId,
                 row: rowIndex,
-                col: colIndex
+                col: colIndex,
+                updated: Boolean(writeResult.updated),
+                skipped_identical: Boolean(writeResult.skipped_identical)
             })
         } catch (e) {
+            failedCount++
             results.push({
                 ok: false,
                 synergy_id: synergyId,
@@ -624,8 +1299,379 @@ function bg_syn_update_batch(updates) {
     return {
         ok: true,
         updated_count: updatedCount,
-        failed_count: Math.max(0, results.length - updatedCount),
+        skipped_identical_count: skippedIdenticalCount,
+        failed_count: failedCount,
         results: results
+    }
+}
+
+function bg_syn_get_score_table_preview(colIndexes) {
+    function normalizeDisplayText(value) {
+        return String(value == null ? '' : value)
+            .replace(/\u00a0/g, ' ')
+            .replace(/\s+/g, ' ')
+            .trim()
+    }
+
+    function getHeaderTemplateType(headerCell) {
+        if (!headerCell) {
+            return ''
+        }
+
+        let templateNode = headerCell.querySelector('[data-options*="dxTemplate"]')
+        let options = String(templateNode ? templateNode.getAttribute('data-options') || '' : '')
+        if (options.includes('standardsAssignmentHeaderTemplate')) {
+            return 'standards_assignment'
+        }
+        if (options.includes('standardsHeaderTemplate')) {
+            return 'standards'
+        }
+        if (options.includes('assignmentHeaderNoScoreEntryTemplate')) {
+            return 'comment'
+        }
+        if (options.includes('assignmentHeaderTemplate')) {
+            return 'assignment'
+        }
+        return ''
+    }
+
+    function getHeaderCellText(headerCell) {
+        if (!headerCell) {
+            return ''
+        }
+
+        let assignmentTitle = normalizeDisplayText(
+            (headerCell.querySelector('.assignment-title span') || {}).textContent || ''
+        )
+        if (assignmentTitle) {
+            return assignmentTitle
+        }
+
+        let bandLabel = normalizeDisplayText(
+            (headerCell.querySelector('.header-cell.band-cell') || {}).textContent || ''
+        )
+        if (bandLabel) {
+            return bandLabel
+        }
+
+        let clean = normalizeDisplayText(headerCell.textContent || '')
+        if (clean) {
+            return clean
+        }
+
+        let ariaLabel = normalizeDisplayText(headerCell.getAttribute('aria-label') || '')
+        if (ariaLabel.toLowerCase().startsWith('column ')) {
+            ariaLabel = ariaLabel.slice(7).trim()
+        }
+        return ariaLabel
+    }
+
+    function getHeaderBandRanges(headerRows) {
+        let ranges = []
+        if (!Array.isArray(headerRows) || headerRows.length < 2) {
+            return ranges
+        }
+
+        let cursor = 0
+        Array.from(headerRows[0].querySelectorAll('td[role="columnheader"]')).forEach((cell) => {
+            let rowSpan = Number(cell.getAttribute('rowspan') || 1)
+            let colSpan = Number(cell.getAttribute('colspan') || 1)
+            if (rowSpan >= 2) {
+                return
+            }
+
+            ranges.push({
+                start: cursor,
+                end: cursor + colSpan - 1,
+                label: getHeaderCellText(cell)
+            })
+            cursor += colSpan
+        })
+
+        return ranges
+    }
+
+    function getBandLabelForLeafIndex(leafIndex, bandRanges) {
+        for (let i = 0; i < bandRanges.length; i++) {
+            let band = bandRanges[i]
+            if (leafIndex >= band.start && leafIndex <= band.end) {
+                return band.label
+            }
+        }
+        return ''
+    }
+
+    function buildHeaderMetaById(rootDoc) {
+        let metaById = {}
+        let headerRows = Array.from(rootDoc.querySelectorAll('.dx-datagrid-headers table tr'))
+        if (headerRows.length === 0) {
+            return metaById
+        }
+
+        Array.from(rootDoc.querySelectorAll('.dx-datagrid-headers table td[role="columnheader"][id]')).forEach((cell) => {
+            let id = String(cell.getAttribute('id') || '')
+            if (!id) {
+                return
+            }
+
+            metaById[id] = {
+                leafLabel: getHeaderCellText(cell),
+                bandLabel: '',
+                templateType: getHeaderTemplateType(cell)
+            }
+        })
+
+        if (headerRows.length < 2) {
+            return metaById
+        }
+
+        let bandRanges = getHeaderBandRanges(headerRows)
+        let leafHeaders = Array.from(
+            headerRows[headerRows.length - 1].querySelectorAll('td[role="columnheader"][id]')
+        )
+
+        leafHeaders.forEach((cell, leafIndex) => {
+            let id = String(cell.getAttribute('id') || '')
+            if (!id) {
+                return
+            }
+            if (!metaById[id]) {
+                metaById[id] = {
+                    leafLabel: getHeaderCellText(cell),
+                    bandLabel: '',
+                    templateType: getHeaderTemplateType(cell)
+                }
+            }
+            metaById[id].bandLabel = getBandLabelForLeafIndex(leafIndex, bandRanges)
+            metaById[id].templateType = getHeaderTemplateType(cell)
+        })
+
+        return metaById
+    }
+
+    function buildCommentColumnMap(scoreTableEl, rootDoc) {
+        let map = {}
+        let firstDataRow = Array.from(scoreTableEl.querySelectorAll('tr[aria-rowindex]')).find((rowEl) => {
+            return rowEl.querySelector('td[aria-colindex]') !== null
+        })
+        if (!firstDataRow) {
+            return map
+        }
+
+        let headerMetaById = buildHeaderMetaById(rootDoc)
+        let visibleCols = Array.from(firstDataRow.querySelectorAll('td[aria-colindex]')).map((cell) => {
+            let colIndex = String(cell.getAttribute('aria-colindex') || '').trim()
+            let headerId = String(cell.getAttribute('aria-describedby') || '').trim()
+            let meta = headerMetaById[headerId] || {}
+            let leafLabel = normalizeDisplayText(meta.leafLabel || '')
+            let bandLabel = normalizeDisplayText(meta.bandLabel || '')
+            let templateType = String(meta.templateType || '')
+            let isComment = (
+                templateType === 'comment' ||
+                leafLabel.toLowerCase() === 'cmt' ||
+                Boolean(cell.querySelector('.cell-flag.cmt-code'))
+            )
+
+            return {
+                colIndex: colIndex,
+                order: Number(colIndex),
+                bandLabel: bandLabel,
+                isComment: isComment
+            }
+        }).filter((column) => column.colIndex)
+
+        let columnsByBand = {}
+        visibleCols.forEach((column) => {
+            let key = column.bandLabel || ''
+            if (!key) {
+                return
+            }
+            if (!columnsByBand[key]) {
+                columnsByBand[key] = []
+            }
+            columnsByBand[key].push(column)
+        })
+
+        Object.keys(columnsByBand).forEach((key) => {
+            let group = columnsByBand[key]
+            let commentCols = group.filter((column) => column.isComment)
+            if (commentCols.length === 0) {
+                return
+            }
+
+            group.forEach((column) => {
+                if (column.isComment || map[column.colIndex]) {
+                    return
+                }
+
+                let match = commentCols
+                    .filter((commentCol) => commentCol.order > column.order)
+                    .sort((a, b) => a.order - b.order)[0]
+
+                if (!match) {
+                    match = commentCols
+                        .slice()
+                        .sort((a, b) => Math.abs(a.order - column.order) - Math.abs(b.order - column.order))[0]
+                }
+
+                if (match) {
+                    map[column.colIndex] = match.colIndex
+                }
+            })
+        })
+
+        let sortedCols = visibleCols.slice().sort((a, b) => a.order - b.order)
+        sortedCols.forEach((column, index) => {
+            if (!column.isComment) {
+                return
+            }
+
+            for (let leftIndex = index - 1; leftIndex >= 0; leftIndex--) {
+                let leftColumn = sortedCols[leftIndex]
+                if (leftColumn.isComment) {
+                    break
+                }
+                if (!map[leftColumn.colIndex]) {
+                    map[leftColumn.colIndex] = column.colIndex
+                }
+            }
+        })
+
+        return map
+    }
+
+    function getEditableScoreInput(cellWrap, targetColIndex) {
+        let input = cellWrap.querySelector('input')
+        if (input) {
+            return input
+        }
+
+        cellWrap.click()
+        input = cellWrap.querySelector('input')
+        if (input) {
+            return input
+        }
+
+        return null
+    }
+
+    function getCellScoreDisplayValue(targetCell) {
+        if (!targetCell) {
+            return null
+        }
+
+        let scoreNode = targetCell.querySelector('.asgn-cell .score')
+        if (scoreNode) {
+            return normalizeDisplayText(scoreNode.textContent || '')
+        }
+
+        let cellNode = targetCell.querySelector('.asgn-cell')
+        if (cellNode) {
+            let text = normalizeDisplayText(cellNode.textContent || '')
+            if (text) {
+                return text
+            }
+        }
+
+        return ''
+    }
+
+    function getCellCommentDisplayValue(targetCell) {
+        if (!targetCell) {
+            return ''
+        }
+
+        let commentNode = targetCell.querySelector('.cell-flag.cmt-code')
+        return normalizeDisplayText(commentNode ? commentNode.textContent || '' : '')
+    }
+
+    function getCellPreviewValue(targetCell, targetRow, targetColIndex, commentColByScoreCol) {
+        if (!targetCell) {
+            return null
+        }
+
+        let cellWrap = targetCell.querySelector('div.asgn-cell-wrap')
+        let scoreValue = getCellScoreDisplayValue(targetCell)
+        if (cellWrap) {
+            let input = getEditableScoreInput(cellWrap, targetColIndex)
+            if (input) {
+                scoreValue = normalizeDisplayText(input.value || '')
+                input.blur()
+            }
+        }
+
+        let commentValue = ''
+        let commentColIndex = String(commentColByScoreCol[String(targetColIndex).trim()] || '').trim()
+        if (commentColIndex && targetRow) {
+            let commentCell = targetRow.querySelector(`td[aria-colindex="${commentColIndex}"]`)
+            commentValue = getCellCommentDisplayValue(commentCell)
+        } else {
+            commentValue = getCellCommentDisplayValue(targetCell)
+        }
+
+        return normalizeDisplayText([scoreValue, commentValue].filter(Boolean).join(' '))
+    }
+
+    let wantedCols = Array.isArray(colIndexes)
+        ? Array.from(new Set(colIndexes.map((value) => String(value || '').trim()).filter(Boolean)))
+        : []
+
+    let docs = [document]
+    try {
+        if (window.frames && window.frames.length > 0) {
+            for (let i = 0; i < window.frames.length; i++) {
+                try {
+                    if (window.frames[i] && window.frames[i].document) {
+                        docs.push(window.frames[i].document)
+                    }
+                } catch (frameErr) {
+                    // pass inaccessible frame
+                }
+            }
+        }
+    } catch (e) {
+        // pass
+    }
+
+    let hostDoc = null
+    let scoreTable = null
+    for (let i = 0; i < docs.length; i++) {
+        let table = docs[i].querySelector('.dx-datagrid-rowsview table')
+        if (table) {
+            hostDoc = docs[i]
+            scoreTable = table
+            break
+        }
+    }
+
+    if (!hostDoc || !scoreTable) {
+        throw new Error('Synergy score table not found in current document/frame.')
+    }
+
+    let commentColByScoreCol = buildCommentColumnMap(scoreTable, hostDoc)
+    let cellsByStudentId = {}
+    scoreTable.querySelectorAll('tr[aria-rowindex]').forEach((rowEl) => {
+        let perm = rowEl.querySelector('span.student-perm-id')
+        let synergyId = String((perm && perm.textContent) || '').trim()
+        if (!synergyId) {
+            return
+        }
+
+        let rowCells = {}
+        wantedCols.forEach((colIndex) => {
+            let targetCell = rowEl.querySelector(`td[aria-colindex="${colIndex}"]`)
+            if (!targetCell) {
+                return
+            }
+            rowCells[colIndex] = getCellPreviewValue(targetCell, rowEl, colIndex, commentColByScoreCol)
+        })
+        cellsByStudentId[synergyId] = rowCells
+    })
+
+    return {
+        ok: true,
+        colIndexes: wantedCols,
+        cellsByStudentId: cellsByStudentId
     }
 }
 
@@ -964,6 +2010,32 @@ function mainListener(request, sender, sendResponse) {
             sendResponse({ ok: true, result: successfulResult })
         }).catch((e) => {
             console.log('Batch injection failed:', e)
+            sendResponse({ ok: false, error: e && e.message ? e.message : String(e) })
+        })
+        return true
+    }
+
+    if (request.from == 'synergy.js' && request.to == 'background.js' && request.title == 'get_score_table_preview') {
+        chrome.scripting.executeScript({
+            world: 'MAIN',
+            args: [Array.isArray(request.colIndexes) ? request.colIndexes : []],
+            target: { tabId: sender.tab.id },
+            func: bg_syn_get_score_table_preview
+        }).then((injectionResults) => {
+            let successfulResult = null
+            for (const frameResult of injectionResults) {
+                if (frameResult && frameResult.result && frameResult.result.ok) {
+                    successfulResult = frameResult.result
+                    break
+                }
+            }
+            if (!successfulResult) {
+                sendResponse({ ok: false, error: 'Could not inspect visible Synergy score cells.' })
+                return
+            }
+            sendResponse({ ok: true, result: successfulResult })
+        }).catch((e) => {
+            console.log('Score preview inspection failed:', e)
             sendResponse({ ok: false, error: e && e.message ? e.message : String(e) })
         })
         return true

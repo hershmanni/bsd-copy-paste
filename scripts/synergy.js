@@ -462,6 +462,22 @@ function getVisibleSynergyStudentIds(limit = 200) {
     return ids
 }
 
+async function getSynergyScoreTablePreviewByStudent(colIndexes) {
+    let response = await runtimeSendMessage({
+        to: 'background.js',
+        from: 'synergy.js',
+        title: 'get_score_table_preview',
+        colIndexes: Array.isArray(colIndexes) ? colIndexes : []
+    })
+
+    if (!response || response.ok !== true) {
+        let errText = response && response.error ? response.error : 'Could not inspect current Synergy cell values.'
+        throw new Error(errText)
+    }
+
+    return response.result || {}
+}
+
 function normalizeHeaderText(text) {
     if (!text) {
         return ''
@@ -1126,6 +1142,7 @@ async function paste_scores_to_column(scores, column_index, roundUpFrom, missing
     let matched = 0
     let pushed = 0
     let skippedTarget = 0
+    let skippedIdentical = 0
     let skippedNoCanvasMatch = 0
     let skippedNoPasteValue = 0
     let failedInjection = 0
@@ -1182,6 +1199,7 @@ async function paste_scores_to_column(scores, column_index, roundUpFrom, missing
     async function runSequentialInjectionFallback(injections) {
         let fallbackPushed = 0
         let fallbackFailed = 0
+        let fallbackSkippedIdentical = 0
 
         await asyncForEach(injections, async (injection) => {
             let message = {
@@ -1203,7 +1221,14 @@ async function paste_scores_to_column(scores, column_index, roundUpFrom, missing
                     let errText = injectResult && injectResult.error ? injectResult.error : 'Unknown injection failure.'
                     throw new Error(errText)
                 }
-                fallbackPushed++
+                let writeResult = injectResult.result && typeof injectResult.result === 'object'
+                    ? injectResult.result
+                    : {}
+                if (Boolean(writeResult.skipped_identical) || writeResult.updated === false) {
+                    fallbackSkippedIdentical++
+                } else {
+                    fallbackPushed++
+                }
             } catch (e) {
                 console.log(`Failed to inject score for Synergy ID ${injection.synergy_id} in column ${col_index}`, e)
                 fallbackFailed++
@@ -1212,7 +1237,8 @@ async function paste_scores_to_column(scores, column_index, roundUpFrom, missing
 
         return {
             pushed: fallbackPushed,
-            failed: fallbackFailed
+            failed: fallbackFailed,
+            skipped_identical: fallbackSkippedIdentical
         }
     }
 
@@ -1231,18 +1257,21 @@ async function paste_scores_to_column(scores, column_index, roundUpFrom, missing
             }
 
             let updatedCount = Number(batchResult.result.updated_count || 0)
+            let skippedIdenticalCount = Number(batchResult.result.skipped_identical_count || 0)
             let failedCount = Number(batchResult.result.failed_count || 0)
-            if (!Number.isFinite(updatedCount) || !Number.isFinite(failedCount)) {
+            if (!Number.isFinite(updatedCount) || !Number.isFinite(skippedIdenticalCount) || !Number.isFinite(failedCount)) {
                 throw new Error('Batch injection returned invalid counters.')
             }
 
             pushed += Math.max(0, updatedCount)
+            skippedIdentical += Math.max(0, skippedIdenticalCount)
             failedInjection += Math.max(0, failedCount)
             skippedTarget += Math.max(0, failedCount)
         } catch (e) {
             console.log('Batch injection failed; falling back to sequential injection.', e)
             let fallbackResult = await runSequentialInjectionFallback(pendingInjections)
             pushed += fallbackResult.pushed
+            skippedIdentical += fallbackResult.skipped_identical
             failedInjection += fallbackResult.failed
             skippedTarget += fallbackResult.failed
         }
@@ -1254,6 +1283,7 @@ async function paste_scores_to_column(scores, column_index, roundUpFrom, missing
         pushed: pushed,
         skipped: skippedTarget,
         skipped_target: skippedTarget,
+        skipped_identical: skippedIdentical,
         skipped_no_canvas_match: skippedNoCanvasMatch,
         skipped_no_paste_value: skippedNoPasteValue,
         failed_injection: failedInjection,
@@ -2527,7 +2557,12 @@ async function pasteSingleRow(row, skipReload = false) {
         }
         status.css('color', '#b4f7fe').text('Pasting...')
         let result = await runMappingPaste(mapping)
-        status.css('color', '#b4f7fe').text(`Done: ${result.pushed}/${result.matched} pushed`)
+        let statusText = `Done: ${result.pushed}/${result.matched} pushed`
+        let skippedIdentical = Number(result && result.skipped_identical ? result.skipped_identical : 0)
+        if (skippedIdentical > 0) {
+            statusText += `, ${skippedIdentical} unchanged`
+        }
+        status.css('color', '#b4f7fe').text(statusText)
     } catch (e) {
         status.css('color', '#f9b1b1').text(`Error: ${e.message}`)
     }
@@ -2592,6 +2627,10 @@ function myListener(request, sender, sendResponse) {
 
                 let result = await synergy_paste(scores, request.roundUpFrom, request.missingPref, request.use_cgr)
                 let statusText = `Synergy paste complete: ${result.pushed}/${result.matched} pushed.`
+                let skippedIdentical = Number(result && result.skipped_identical ? result.skipped_identical : 0)
+                if (skippedIdentical > 0) {
+                    statusText += ` ${skippedIdentical} unchanged.`
+                }
                 let skippedTarget = Number(result && result.skipped_target ? result.skipped_target : 0)
                 if (skippedTarget > 0) {
                     statusText += ` ${skippedTarget} skipped in current section.`
@@ -2660,6 +2699,33 @@ function myListener(request, sender, sendResponse) {
                     studentIds: studentIds,
                     viewMode: headerInfo.viewMode || 'view_by_assignment',
                     focusDisplayString: focusDisplayString
+                })
+            } catch (e) {
+                sendResponse({
+                    ok: false,
+                    error: e && e.message ? e.message : String(e)
+                })
+            }
+        })()
+        return true
+    }
+
+    if (request.from == 'sidepanel.js' && request.to == 'synergy.js' && request.title == 'get_score_table_preview') {
+        ;(async () => {
+            try {
+                let check = checkSynergyGradebookPage()
+                if (!check.eligible) {
+                    sendResponse({
+                        ok: false,
+                        error: `Mapper unavailable: ${check.reason}`
+                    })
+                    return
+                }
+
+                let result = await getSynergyScoreTablePreviewByStudent(request.colIndexes)
+                sendResponse({
+                    ok: true,
+                    result: result
                 })
             } catch (e) {
                 sendResponse({
