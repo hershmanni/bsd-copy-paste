@@ -702,17 +702,8 @@ function bg_syn_update(score, synergy_id, row_index, col_index) {
         return normalizeDisplayText(commentNode ? commentNode.textContent || '' : '')
     }
 
-    function getCurrentCompositeValue(targetCell, targetRow, targetColIndex, commentColByScoreCol) {
+    function getCurrentCompositeDisplayValue(targetCell, targetRow, targetColIndex, commentColByScoreCol) {
         let scoreValue = getCellScoreDisplayValue(targetCell)
-        let cellWrap = targetCell ? targetCell.querySelector('div.asgn-cell-wrap') : null
-        if (cellWrap) {
-            let input = getEditableScoreInput(cellWrap, targetColIndex)
-            if (input) {
-                scoreValue = normalizeDisplayText(input.value || '')
-                input.blur()
-            }
-        }
-
         let commentValue = ''
         let commentColIndex = String(commentColByScoreCol[String(targetColIndex).trim()] || '').trim()
         if (commentColIndex && targetRow) {
@@ -731,9 +722,26 @@ function bg_syn_update(score, synergy_id, row_index, col_index) {
             throw new Error(`Column ${targetColIndex} is not a score-entry cell.`)
         }
 
-        let input = getEditableScoreInput(cellWrap, targetColIndex)
         let nextValue = nextScore == null ? '' : String(nextScore)
-        let currentValue = getCurrentCompositeValue(targetCell, targetRow, targetColIndex, commentColByScoreCol)
+        let displayValue = getCurrentCompositeDisplayValue(targetCell, targetRow, targetColIndex, commentColByScoreCol)
+
+        if (normalizeScoreEntryValue(displayValue) === normalizeScoreEntryValue(nextValue)) {
+            return {
+                updated: false,
+                skipped_identical: true
+            }
+        }
+
+        let input = getEditableScoreInput(cellWrap, targetColIndex)
+        let currentValue = normalizeDisplayText(input.value || '')
+        let currentCommentColIndex = String(commentColByScoreCol[String(targetColIndex).trim()] || '').trim()
+        if (currentCommentColIndex && targetRow) {
+            let commentCell = targetRow.querySelector(`td[aria-colindex="${currentCommentColIndex}"]`)
+            let commentValue = getCellCommentDisplayValue(commentCell)
+            currentValue = normalizeDisplayText([currentValue, commentValue].filter(Boolean).join(' '))
+        } else {
+            currentValue = normalizeDisplayText([currentValue, getCellCommentDisplayValue(targetCell)].filter(Boolean).join(' '))
+        }
 
         if (normalizeScoreEntryValue(currentValue) === normalizeScoreEntryValue(nextValue)) {
             input.blur()
@@ -1123,17 +1131,8 @@ function bg_syn_update_batch(updates) {
         return normalizeDisplayText(commentNode ? commentNode.textContent || '' : '')
     }
 
-    function getCurrentCompositeValue(targetCell, targetRow, targetColIndex, commentColByScoreCol) {
+    function getCurrentCompositeDisplayValue(targetCell, targetRow, targetColIndex, commentColByScoreCol) {
         let scoreValue = getCellScoreDisplayValue(targetCell)
-        let cellWrap = targetCell ? targetCell.querySelector('div.asgn-cell-wrap') : null
-        if (cellWrap) {
-            let input = getEditableScoreInput(cellWrap, targetColIndex)
-            if (input) {
-                scoreValue = normalizeDisplayText(input.value || '')
-                input.blur()
-            }
-        }
-
         let commentValue = ''
         let commentColIndex = String(commentColByScoreCol[String(targetColIndex).trim()] || '').trim()
         if (commentColIndex && targetRow) {
@@ -1152,9 +1151,26 @@ function bg_syn_update_batch(updates) {
             throw new Error(`Column ${targetColIndex} is not a score-entry cell.`)
         }
 
-        let input = getEditableScoreInput(cellWrap, targetColIndex)
         let nextValue = nextScore == null ? '' : String(nextScore)
-        let currentValue = getCurrentCompositeValue(targetCell, targetRow, targetColIndex, commentColByScoreCol)
+        let displayValue = getCurrentCompositeDisplayValue(targetCell, targetRow, targetColIndex, commentColByScoreCol)
+
+        if (normalizeScoreEntryValue(displayValue) === normalizeScoreEntryValue(nextValue)) {
+            return {
+                updated: false,
+                skipped_identical: true
+            }
+        }
+
+        let input = getEditableScoreInput(cellWrap, targetColIndex)
+        let currentValue = normalizeDisplayText(input.value || '')
+        let currentCommentColIndex = String(commentColByScoreCol[String(targetColIndex).trim()] || '').trim()
+        if (currentCommentColIndex && targetRow) {
+            let commentCell = targetRow.querySelector(`td[aria-colindex="${currentCommentColIndex}"]`)
+            let commentValue = getCellCommentDisplayValue(commentCell)
+            currentValue = normalizeDisplayText([currentValue, commentValue].filter(Boolean).join(' '))
+        } else {
+            currentValue = normalizeDisplayText([currentValue, getCellCommentDisplayValue(targetCell)].filter(Boolean).join(' '))
+        }
 
         if (normalizeScoreEntryValue(currentValue) === normalizeScoreEntryValue(nextValue)) {
             input.blur()
@@ -1540,21 +1556,6 @@ function bg_syn_get_score_table_preview(colIndexes) {
         return map
     }
 
-    function getEditableScoreInput(cellWrap, targetColIndex) {
-        let input = cellWrap.querySelector('input')
-        if (input) {
-            return input
-        }
-
-        cellWrap.click()
-        input = cellWrap.querySelector('input')
-        if (input) {
-            return input
-        }
-
-        return null
-    }
-
     function getCellScoreDisplayValue(targetCell) {
         if (!targetCell) {
             return null
@@ -1590,16 +1591,7 @@ function bg_syn_get_score_table_preview(colIndexes) {
             return null
         }
 
-        let cellWrap = targetCell.querySelector('div.asgn-cell-wrap')
         let scoreValue = getCellScoreDisplayValue(targetCell)
-        if (cellWrap) {
-            let input = getEditableScoreInput(cellWrap, targetColIndex)
-            if (input) {
-                scoreValue = normalizeDisplayText(input.value || '')
-                input.blur()
-            }
-        }
-
         let commentValue = ''
         let commentColIndex = String(commentColByScoreCol[String(targetColIndex).trim()] || '').trim()
         if (commentColIndex && targetRow) {

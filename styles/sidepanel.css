@@ -1256,7 +1256,7 @@
 
 .bsd-card-assignment-meta-row {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+    grid-template-columns: auto minmax(0, 1fr) auto;
     gap: 12px;
     align-items: center;
 }
@@ -1268,6 +1268,22 @@
     min-width: 0;
     color: #8fb2d1;
     font-size: 12px;
+}
+
+.bsd-card-assignment-meta-canvas {
+    display: grid;
+    grid-template-columns: auto auto auto minmax(0, 1fr);
+    align-items: center;
+    width: 100%;
+}
+
+.bsd-card-assignment-meta-canvas .bsd-inline-label,
+.bsd-card-assignment-meta-canvas .bsd-card-assignment-meta-sep {
+    white-space: nowrap;
+}
+
+.bsd-card-assignment-meta-synergy {
+    white-space: nowrap;
 }
 
 .bsd-card-assignment-actions,
@@ -1286,6 +1302,8 @@
 
 .bsd-canvas-updated {
     min-height: 26px;
+    min-width: 0;
+    width: 100%;
     border: 1px solid #586473;
     border-radius: 4px;
     padding: 4px 8px;
@@ -1296,7 +1314,7 @@
     text-overflow: ellipsis;
     display: inline-flex;
     align-items: center;
-    max-width: 240px;
+    max-width: none;
 }
 
 .bsd-card-actions {

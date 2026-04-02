@@ -1004,6 +1004,17 @@ function getScoreTableSubmissionRubricScoreRecord(submission, rubricId) {
         }
     }
 
+    // Match paste behavior: if Canvas has no rubric assessment for this student at all,
+    // Synergy paste falls back to a synthetic missing value for visible students.
+    if (!assessment || typeof assessment !== 'object' || Object.keys(assessment).length === 0) {
+        return {
+            score: '',
+            excused: false,
+            late: false,
+            missing: true
+        }
+    }
+
     return null
 }
 
