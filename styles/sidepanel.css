@@ -771,6 +771,15 @@
     font-variant-numeric: tabular-nums;
 }
 
+#bsd-sidepanel #bsd-score-table .bsd-score-table-attempt {
+    text-align: center;
+    font-variant-numeric: tabular-nums;
+}
+
+#bsd-sidepanel #bsd-score-table .bsd-score-table-date {
+    font-variant-numeric: tabular-nums;
+}
+
 #bsd-sidepanel #bsd-score-table .bsd-score-table-empty {
     color: #6d859d;
 }

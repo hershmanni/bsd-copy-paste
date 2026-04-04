@@ -13,6 +13,7 @@ const canvasAssignmentsFetchConcurrency = 4
 const canvasCourseRosterMatchConcurrency = 6
 const assignmentMatchThreshold = 0.45
 const altMatchThreshold = 0.55
+const canvasSubmissionSyncTokenVersion = 'v2'
 
 let mapperState = {
     activeTabId: null,
@@ -1446,6 +1447,52 @@ function getScoreTableFlagCell(value) {
     return value ? '&#10003;' : ''
 }
 
+function scoreTableColumnHasValues(submissions, key) {
+    let list = Array.isArray(submissions) ? submissions : []
+    return list.some((submission) => {
+        if (!submission || typeof submission !== 'object') {
+            return false
+        }
+        let value = submission[key]
+        return value != null && String(value).trim() !== ''
+    })
+}
+
+function getScoreTableDateTimeText(value) {
+    if (!value) {
+        return ''
+    }
+
+    let parsed = new Date(value)
+    if (Number.isNaN(parsed.getTime())) {
+        return String(value)
+    }
+
+    return parsed.toLocaleString()
+}
+
+function compareScoreTableDateValues(leftValue, rightValue, sortDirection = 'asc') {
+    let leftText = leftValue ? String(leftValue) : ''
+    let rightText = rightValue ? String(rightValue) : ''
+    let leftMs = leftText ? Date.parse(leftText) : Number.NaN
+    let rightMs = rightText ? Date.parse(rightText) : Number.NaN
+    let leftHasDate = !Number.isNaN(leftMs)
+    let rightHasDate = !Number.isNaN(rightMs)
+
+    if (leftHasDate && rightHasDate && leftMs !== rightMs) {
+        return sortDirection === 'desc' ? rightMs - leftMs : leftMs - rightMs
+    }
+    if (leftHasDate !== rightHasDate) {
+        return leftHasDate ? -1 : 1
+    }
+    if (leftText !== rightText) {
+        let textCompare = compareTextAsc(leftText, rightText)
+        return sortDirection === 'desc' ? -textCompare : textCompare
+    }
+
+    return 0
+}
+
 function getSortableScoreTableCellValue(rawValue) {
     if (rawValue == null) {
         return { rank: 3, text: '', number: 0 }
@@ -1505,6 +1552,18 @@ function compareScoreTableSubmissions(left, right, sortKey = 'synergy_order', so
     } else if (sortKey === 'name') {
         compare = compareTextAsc(getSubmissionDisplayName(left), getSubmissionDisplayName(right))
         compare = sortDirection === 'desc' ? -compare : compare
+    } else if (sortKey === 'attempt') {
+        compare = compareScoreTableCellValues(
+            left && left.attempt != null ? String(left.attempt) : '',
+            right && right.attempt != null ? String(right.attempt) : '',
+            sortDirection
+        )
+    } else if (sortKey === 'submitted_at' || sortKey === 'graded_at') {
+        compare = compareScoreTableDateValues(
+            left && left[sortKey] ? left[sortKey] : '',
+            right && right[sortKey] ? right[sortKey] : '',
+            sortDirection
+        )
     } else if (sortKey === 'missing' || sortKey === 'late' || sortKey === 'excused') {
         compare = Number(Boolean(left && left[sortKey])) - Number(Boolean(right && right[sortKey]))
         compare = sortDirection === 'desc' ? -compare : compare
@@ -1538,6 +1597,11 @@ function buildScoreTableFilterText(submission, rubrics) {
         submission && submission.canvas_id ? submission.canvas_id : '',
         submission && submission.short_name ? submission.short_name : '',
         submission && submission.sortable_name ? submission.sortable_name : '',
+        submission && submission.attempt != null ? String(submission.attempt) : '',
+        submission && submission.submitted_at ? submission.submitted_at : '',
+        submission && submission.graded_at ? submission.graded_at : '',
+        getScoreTableDateTimeText(submission && submission.submitted_at ? submission.submitted_at : ''),
+        getScoreTableDateTimeText(submission && submission.graded_at ? submission.graded_at : ''),
         submission && submission.entered_score != null ? String(submission.entered_score) : '',
         submission && submission.missing ? 'missing' : '',
         submission && submission.late ? 'late' : '',
@@ -1658,11 +1722,15 @@ function renderScoreTableModalTable() {
     ))
     renderScoreTableModalMeta()
 
+    let showAttemptColumn = scoreTableColumnHasValues(submissions, 'attempt')
+    let showSubmittedAtColumn = scoreTableColumnHasValues(submissions, 'submitted_at')
+
     let headerHtml = '<tr>'
     headerHtml += buildScoreTableHeaderCellHtml('Row', 'synergy_order', 'Match current Synergy row order')
     headerHtml += buildScoreTableHeaderCellHtml('Period', 'period')
     headerHtml += buildScoreTableHeaderCellHtml('Synergy ID', 'synergy_id')
     headerHtml += buildScoreTableHeaderCellHtml('Name', 'name')
+    headerHtml += buildScoreTableHeaderCellHtml('Graded At', 'graded_at')
 
     rubrics.forEach((rubric) => {
         let label = String(rubric && rubric.alt_code ? rubric.alt_code : rubric && rubric.id ? rubric.id : '')
@@ -1676,6 +1744,12 @@ function renderScoreTableModalTable() {
     headerHtml += buildScoreTableHeaderCellHtml('Late', 'late')
     headerHtml += buildScoreTableHeaderCellHtml('Excused', 'excused')
     headerHtml += buildScoreTableHeaderCellHtml('Points*', 'points', 'Canvas entered score')
+    if (showAttemptColumn) {
+        headerHtml += buildScoreTableHeaderCellHtml('Attempt', 'attempt')
+    }
+    if (showSubmittedAtColumn) {
+        headerHtml += buildScoreTableHeaderCellHtml('Submitted At', 'submitted_at')
+    }
     headerHtml += '</tr>'
     tableHead.html(headerHtml)
 
@@ -1684,6 +1758,10 @@ function renderScoreTableModalTable() {
         let name = getSubmissionDisplayName(submission)
         let speedGraderUrl = getCanvasSpeedGraderUrl(submission)
         let nameCell = escapeHtmlText(name)
+        let submittedAtRaw = submission && submission.submitted_at ? String(submission.submitted_at) : ''
+        let gradedAtRaw = submission && submission.graded_at ? String(submission.graded_at) : ''
+        let submittedAtText = getScoreTableDateTimeText(submittedAtRaw)
+        let gradedAtText = getScoreTableDateTimeText(gradedAtRaw)
         if (speedGraderUrl) {
             nameCell = `<a href="${escapeHtmlText(speedGraderUrl)}" target="_blank" rel="noopener noreferrer">${nameCell}</a>`
         }
@@ -1695,6 +1773,7 @@ function renderScoreTableModalTable() {
         rowsHtml += `<td>${escapeHtmlText(String(submission && submission.period ? submission.period : ''))}</td>`
         rowsHtml += `<td>${escapeHtmlText(String(submission && submission.synergy_id ? submission.synergy_id : ''))}</td>`
         rowsHtml += `<td class="bsd-score-table-name">${nameCell}</td>`
+        rowsHtml += `<td class="bsd-score-table-date"${gradedAtRaw ? ` title="${escapeHtmlText(gradedAtRaw)}"` : ''}>${escapeHtmlText(gradedAtText)}</td>`
 
         rubrics.forEach((rubric) => {
             let scoreText = getRubricScoreCellText(submission, rubric && rubric.id ? rubric.id : '')
@@ -1723,6 +1802,12 @@ function renderScoreTableModalTable() {
         rowsHtml += `<td class="bsd-score-table-flag">${getScoreTableFlagCell(Boolean(submission && submission.late))}</td>`
         rowsHtml += `<td class="bsd-score-table-flag">${getScoreTableFlagCell(Boolean(submission && submission.excused))}</td>`
         rowsHtml += `<td>${escapeHtmlText(submission && submission.entered_score != null ? String(submission.entered_score) : '')}</td>`
+        if (showAttemptColumn) {
+            rowsHtml += `<td class="bsd-score-table-attempt">${escapeHtmlText(submission && submission.attempt != null ? String(submission.attempt) : '')}</td>`
+        }
+        if (showSubmittedAtColumn) {
+            rowsHtml += `<td class="bsd-score-table-date"${submittedAtRaw ? ` title="${escapeHtmlText(submittedAtRaw)}"` : ''}>${escapeHtmlText(submittedAtText)}</td>`
+        }
         rowsHtml += '</tr>'
     })
 
@@ -2103,6 +2188,9 @@ function compactSubmissionForCache(submission) {
         short_name: String(row.short_name || ''),
         sortable_name: String(row.sortable_name || ''),
         period: String(row.period || ''),
+        attempt: row.attempt == null ? null : row.attempt,
+        submitted_at: row.submitted_at ? String(row.submitted_at) : '',
+        graded_at: row.graded_at ? String(row.graded_at) : '',
         posted_at: row.posted_at ? String(row.posted_at) : '',
         entered_score: row.entered_score == null ? null : row.entered_score,
         excused: Boolean(row.excused),
@@ -2173,6 +2261,29 @@ function getAssignmentUpdatedAtMap(assignments) {
         map[assignmentId] = String(assignment && assignment.updated_at ? assignment.updated_at : '')
     })
     return map
+}
+
+function buildCanvasSubmissionSyncToken(updatedAtValue) {
+    return `${canvasSubmissionSyncTokenVersion}|${String(updatedAtValue || '')}`
+}
+
+function needsSubmissionMetadataRefresh(submissions) {
+    let list = Array.isArray(submissions) ? submissions : []
+    if (list.length === 0) {
+        return false
+    }
+
+    return list.some((submission) => {
+        if (!submission || typeof submission !== 'object') {
+            return false
+        }
+
+        return (
+            !Object.prototype.hasOwnProperty.call(submission, 'attempt') ||
+            !Object.prototype.hasOwnProperty.call(submission, 'submitted_at') ||
+            !Object.prototype.hasOwnProperty.call(submission, 'graded_at')
+        )
+    })
 }
 
 function getFirstSubmissionsForAssignments(assignments, submissionsByAssignment) {
@@ -2880,7 +2991,7 @@ function renderCopyCanvasAssignmentDetails() {
 
     let metaItems = [
         {
-            label: 'Last updated',
+            label: 'Last graded at',
             value: getAssignmentUpdatedText(assignment)
         },
         {
@@ -2933,7 +3044,7 @@ function formatCanvasDateTime(value) {
     return parsed.toLocaleString()
 }
 
-function getMostRecentPostedAtFromSubmissions(submissions) {
+function getMostRecentGradedAtFromSubmissions(submissions) {
     if (!Array.isArray(submissions) || submissions.length === 0) {
         return ''
     }
@@ -2942,8 +3053,8 @@ function getMostRecentPostedAtFromSubmissions(submissions) {
     let latestRaw = ''
     submissions.forEach((submission) => {
         let candidate =
-            (submission && submission.posted_at) ||
-            (submission && submission.full_object && submission.full_object.posted_at) ||
+            (submission && submission.graded_at) ||
+            (submission && submission.full_object && submission.full_object.graded_at) ||
             ''
         if (!candidate) {
             return
@@ -2999,10 +3110,11 @@ function renderCanvasAssignmentSummary() {
         }
         totalSubmissions += submissions.length
 
-        let mostRecentPostedAt = getMostRecentPostedAtFromSubmissions(submissions)
+        let mostRecentGradedAt = getMostRecentGradedAtFromSubmissions(submissions)
+        let updatedValue = mostRecentGradedAt || assignment.updated_at || assignment.due_at || assignment.created_at
         let row = $('<tr></tr>')
         row.append($('<td></td>').text(String(assignment.name || assignmentId)))
-        row.append($('<td></td>').text(formatCanvasDateTime(mostRecentPostedAt)))
+        row.append($('<td></td>').text(formatCanvasDateTime(updatedValue)))
         row.append($('<td></td>').text(String(submissions.length)))
         tbody.append(row)
     })
@@ -3454,6 +3566,9 @@ async function fetchCanvasSubmissionsForAssignment(courseId, assignment, student
                 course_id: String(courseId),
                 canvas_id: String(item && item.user_id ? item.user_id : ''),
                 assign_id: String(assignment.id),
+                attempt: item && Object.prototype.hasOwnProperty.call(item, 'attempt') ? item.attempt : null,
+                submitted_at: item ? item.submitted_at : null,
+                graded_at: item ? item.graded_at : null,
                 posted_at: item ? item.posted_at : null,
                 entered_score: item && Object.prototype.hasOwnProperty.call(item, 'entered_score') ? item.entered_score : null,
                 excused: Boolean(item && item.excused),
@@ -3773,8 +3888,14 @@ async function fetchAllCanvasDataForCourse(courseId, options = {}) {
             }
             let hasSyncToken = Object.prototype.hasOwnProperty.call(cachedSubmissionSyncMap, assignmentId)
             let lastSyncedUpdatedAt = String(cachedSubmissionSyncMap[assignmentId] || '')
-            let latestUpdatedAt = String(assignmentUpdatedAtMap[assignmentId] || '')
-            let needsFetch = forceAssignmentsRefresh || !hasSyncToken || lastSyncedUpdatedAt !== latestUpdatedAt
+            let latestUpdatedAt = buildCanvasSubmissionSyncToken(assignmentUpdatedAtMap[assignmentId] || '')
+            let cachedSubmissions = cachedSubmissionsByAssignment[assignmentId]
+            let missingSubmissionMetadata = needsSubmissionMetadataRefresh(cachedSubmissions)
+            let needsFetch =
+                forceAssignmentsRefresh ||
+                !hasSyncToken ||
+                lastSyncedUpdatedAt !== latestUpdatedAt ||
+                missingSubmissionMetadata
             if (needsFetch) {
                 assignmentsToFetch.push(assignment)
             }
@@ -3847,7 +3968,9 @@ async function fetchAllCanvasDataForCourse(courseId, options = {}) {
                             showStatus: false
                         })
                         submissionsByAssignment[assignmentId] = result.submissions
-                        submissionSyncMap[assignmentId] = String(assignment && assignment.updated_at ? assignment.updated_at : '')
+                        submissionSyncMap[assignmentId] = buildCanvasSubmissionSyncToken(
+                            assignment && assignment.updated_at ? assignment.updated_at : ''
+                        )
                         unmatchedCount += result.unmatchedCount
                     } catch (e) {
                         fetchError = e
@@ -3880,7 +4003,9 @@ async function fetchAllCanvasDataForCourse(courseId, options = {}) {
                 return
             }
             if (!Object.prototype.hasOwnProperty.call(submissionSyncMap, assignmentId)) {
-                submissionSyncMap[assignmentId] = String(assignment && assignment.updated_at ? assignment.updated_at : '')
+                submissionSyncMap[assignmentId] = buildCanvasSubmissionSyncToken(
+                    assignment && assignment.updated_at ? assignment.updated_at : ''
+                )
             }
         })
 
@@ -4630,8 +4755,8 @@ function getAssignmentUpdatedText(assignment) {
     }
     let assignmentId = String(assignment.id || '')
     let submissions = assignmentId ? mapperState.submissionsByAssignment[assignmentId] : []
-    let mostRecentPostedAt = getMostRecentPostedAtFromSubmissions(submissions)
-    let value = mostRecentPostedAt || assignment.updated_at || assignment.due_at || assignment.created_at
+    let mostRecentGradedAt = getMostRecentGradedAtFromSubmissions(submissions)
+    let value = mostRecentGradedAt || assignment.updated_at || assignment.due_at || assignment.created_at
     return formatCanvasDateTime(value)
 }
 
@@ -4875,8 +5000,8 @@ function getCardLastUpdatedTimestamp(card) {
     }
     let assignmentIdKey = String(assignment.id || '')
     let submissions = assignmentIdKey ? mapperState.submissionsByAssignment[assignmentIdKey] : []
-    let mostRecentPostedAt = getMostRecentPostedAtFromSubmissions(submissions)
-    let value = mostRecentPostedAt || assignment.updated_at || assignment.due_at || assignment.created_at
+    let mostRecentGradedAt = getMostRecentGradedAtFromSubmissions(submissions)
+    let value = mostRecentGradedAt || assignment.updated_at || assignment.due_at || assignment.created_at
     if (!value) {
         return -1
     }
@@ -5416,7 +5541,7 @@ function createMapperCard(cardData = {}) {
                     <div class="bsd-card-assignment-meta bsd-card-assignment-meta-canvas">
                         <span class="bsd-inline-label">Canvas</span>
                         <span class="bsd-card-assignment-meta-sep" aria-hidden="true">|</span>
-                        <span class="bsd-inline-label">last updated:</span>
+                        <span class="bsd-inline-label">last graded at:</span>
                         <div class="bsd-canvas-updated">-</div>
                     </div>
                     <div class="bsd-card-assignment-actions bsd-card-assignment-actions-placeholder" aria-hidden="true">
@@ -6321,10 +6446,11 @@ async function runRefreshWorkflow() {
         return
     }
 
-    await fetchCanvasScoresAndAutoMatch()
+    // Grade changes can update submission graded_at without changing assignment.updated_at.
+    await fetchCanvasScoresAndAutoMatch({ forceAssignmentsRefresh: true })
 }
 
-async function fetchCanvasScoresAndAutoMatch() {
+async function fetchCanvasScoresAndAutoMatch(options = {}) {
     if (canvasFetchInFlight) {
         setMapperStatus('Canvas fetch is already in progress.', true)
         return
@@ -6334,12 +6460,14 @@ async function fetchCanvasScoresAndAutoMatch() {
         return
     }
 
+    let forceAssignmentsRefresh = options.forceAssignmentsRefresh === true
+
     suppressLocalRefreshEvents = true
     try {
         clearMapperMappings(false, { clearPairStore: true })
         let fetchResult = await fetchAllCanvasDataForCourse(mapperState.selectedCanvasCourseId, {
             manageLoading: true,
-            forceAssignmentsRefresh: false
+            forceAssignmentsRefresh: forceAssignmentsRefresh
         })
 
         if (!fetchResult) {

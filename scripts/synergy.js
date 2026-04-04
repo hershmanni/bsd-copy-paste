@@ -1068,11 +1068,39 @@ function findBestMatch(targetText, candidates, getText, threshold = 0.5) {
     }
 }
 
+function getMostRecentGradedAtFromSubmissions(submissions) {
+    if (!Array.isArray(submissions) || submissions.length === 0) {
+        return ''
+    }
+
+    let latestMs = 0
+    let latestRaw = ''
+    submissions.forEach((submission) => {
+        let candidate = submission && submission.graded_at ? submission.graded_at : ''
+        if (!candidate) {
+            return
+        }
+        let parsedMs = Date.parse(String(candidate))
+        if (Number.isNaN(parsedMs)) {
+            return
+        }
+        if (!latestRaw || parsedMs > latestMs) {
+            latestMs = parsedMs
+            latestRaw = String(candidate)
+        }
+    })
+
+    return latestRaw
+}
+
 function getAssignmentUpdatedText(assignment) {
     if (!assignment) {
         return '-'
     }
-    let value = assignment.updated_at || assignment.due_at || assignment.created_at
+    let assignmentId = String(assignment.id || '')
+    let submissions = assignmentId ? mapperState.submissionsByAssignment[assignmentId] : []
+    let mostRecentGradedAt = getMostRecentGradedAtFromSubmissions(submissions)
+    let value = mostRecentGradedAt || assignment.updated_at || assignment.due_at || assignment.created_at
     if (!value) {
         return '-'
     }
