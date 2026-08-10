@@ -330,6 +330,28 @@ function getStoredCanvasCourseMatchForCurrentSynergyCourse() {
     return match
 }
 
+function restoreConfiguredCanvasCourseFromState() {
+    let storedMatch = getStoredCanvasCourseMatchForCurrentSynergyCourse()
+    let courseId = String(storedMatch && storedMatch.canvasCourseId ? storedMatch.canvasCourseId : '')
+    if (!courseId) {
+        return null
+    }
+
+    let existingCourses = Array.isArray(mapperState.canvasCourses) ? mapperState.canvasCourses : []
+    let existingCourse = existingCourses.find((course) => String(course && course.id ? course.id : '') === courseId)
+    let course = existingCourse || {
+        id: courseId,
+        name: String(storedMatch.canvasCourseName || `Course ${courseId}`).trim(),
+        term_name: ''
+    }
+
+    if (!existingCourse) {
+        mapperState.canvasCourses = [course, ...existingCourses]
+    }
+    setActiveCourseDataFromCache(courseId)
+    return course
+}
+
 function getCanvasCourseNameForId(courseId, courses = null) {
     let wanted = String(courseId || '')
     if (!wanted) {
@@ -3676,6 +3698,10 @@ async function loadCanvasCourses(forceFromTabs = false, options = {}) {
 
         renderCanvasCourseOptions()
         if (mapperState.selectedCanvasCourseId) {
+            await persistCanvasCourseMatchForCurrentSynergyCourse(
+                mapperState.selectedCanvasCourseId,
+                getCanvasCourseNameForId(mapperState.selectedCanvasCourseId, courses)
+            )
             let summary = await loadCanvasAssignmentsForSelectedCourse({
                 courseId: mapperState.selectedCanvasCourseId,
                 manageLoading: false,
@@ -6380,8 +6406,14 @@ async function refreshMapperPanel(showStatus = true) {
             ? context.studentIds.map((id) => normalizeSynergyId(id)).filter(Boolean)
             : []
         updateSynergyCourseContextFromResponse(context)
+        let restoredCanvasCourse = restoreConfiguredCanvasCourseFromState()
         mapperState.viewMode = context.viewMode || 'view_by_assignment'
         syncMappingsFromCurrentPair()
+
+        if (restoredCanvasCourse) {
+            renderCanvasCourseOptions()
+            renderCanvasAssignmentSummary()
+        }
 
         renderMappingsFromState()
         autoMatchAllMappings(false, false, false)
@@ -6436,7 +6468,10 @@ async function runRefreshWorkflow() {
         return
     }
 
-    if (didSynergyCourseContextChange(previousSynergyCourseKey, previousSynergyCourseDisplay)) {
+    if (
+        didSynergyCourseContextChange(previousSynergyCourseKey, previousSynergyCourseDisplay) &&
+        !getStoredCanvasCourseMatchForCurrentSynergyCourse()
+    ) {
         await loadCanvasCourses(false, { resetSelectedCourse: true })
     }
 
@@ -6704,12 +6739,24 @@ async function initializeCanvasSourceUi() {
     mapperState.canvasIncludeConcludedCourses = false
     mapperState.canvasCourseFilter = ''
     setRefreshActivity(false)
+    let restoredCanvasCourse = restoreConfiguredCanvasCourseFromState()
     renderCanvasCourseOptions()
     renderCanvasAssignmentSummary()
-    setCanvasCourseStatus('Open an authenticated Canvas tab, then click "Load Courses".')
     setCanvasFetchStatus('')
     clearCanvasFetchProgress()
     updateCanvasActionButtons()
+
+    if (restoredCanvasCourse) {
+        let courseLabel = getCanvasCourseDisplayName(restoredCanvasCourse) || `Course ${restoredCanvasCourse.id}`
+        let assignmentCount = getCourseAssignmentsFromCache(restoredCanvasCourse.id).length
+        let assignmentText = assignmentCount === 1 ? '1 cached assignment' : `${assignmentCount} cached assignments`
+        setCanvasCourseStatus(
+            `Restored saved Canvas course: ${courseLabel} (${assignmentText}). Click "Load Courses" to change it.`
+        )
+        return
+    }
+
+    setCanvasCourseStatus('No saved Canvas course for this Synergy class. Loading courses...')
     await loadCanvasCourses(false)
 }
 
